@@ -11,6 +11,8 @@ import {
   type WorkRole,
 } from "../types";
 import { splitTargetHours, teilzeitShiftCount } from "../lib/splitTargetHours";
+import { describePreferredWindow, preferredWindowsOf } from "../lib/preferredWindows";
+import { minutesToTime, timeToMinutes } from "../lib/time";
 import {
   activeDaysInMonth,
   employmentPeriodLabel,
@@ -81,6 +83,10 @@ type Draft = {
   endDate: string;
   canSwitchRole: boolean;
   roleByMonth: Record<string, WorkRole>;
+  shiftMin: string;
+  shiftMax: string;
+  spreadEvenly: boolean;
+  windows: { days: WeekdayName[]; start: string; end: string }[];
 };
 
 function draftFrom(emp?: Employee): Draft {
@@ -98,7 +104,38 @@ function draftFrom(emp?: Employee): Draft {
     endDate: emp?.endDate ?? "",
     canSwitchRole: emp?.canSwitchRole === true,
     roleByMonth: { ...(emp?.roleByMonth ?? {}) },
+    shiftMin: emp?.shiftHours ? String(emp.shiftHours.min) : "",
+    shiftMax: emp?.shiftHours ? String(emp.shiftHours.max) : "",
+    spreadEvenly: emp?.spreadEvenly === true,
+    windows: (emp?.preferredWindows ?? []).map((w) => ({
+      days: [...w.days],
+      start: minutesToTime(w.startMinutes),
+      end: minutesToTime(w.endMinutes),
+    })),
   };
+}
+
+/** „Độ dài ca" aus dem Formular: beide Werte > 0, sonst nicht gesetzt. */
+function shiftHoursFromDraft(d: Draft): Employee["shiftHours"] {
+  const min = Number(d.shiftMin);
+  const max = Number(d.shiftMax);
+  if (!(min > 0) || !(max > 0)) return undefined;
+  return { min: Math.min(min, max), max: Math.max(min, max) };
+}
+
+/** Nur vollständige Khung giờ (mind. ein Tag, Ende nach Beginn). */
+function windowsFromDraft(d: Draft): Employee["preferredWindows"] {
+  const out = d.windows.flatMap((w) => {
+    try {
+      const startMinutes = timeToMinutes(w.start);
+      const endMinutes = timeToMinutes(w.end);
+      if (w.days.length === 0 || endMinutes <= startMinutes) return [];
+      return [{ days: WEEKDAY_ORDER.filter((x) => w.days.includes(x)), startMinutes, endMinutes }];
+    } catch {
+      return [];
+    }
+  });
+  return out.length > 0 ? out : undefined;
 }
 
 function draftToEmployee(d: Draft): Omit<Employee, "id"> {
@@ -128,6 +165,9 @@ function draftToEmployee(d: Draft): Omit<Employee, "id"> {
       const kept = Object.fromEntries(Object.entries(d.roleByMonth).filter(([, r]) => r !== d.workRole));
       return Object.keys(kept).length > 0 ? kept : undefined;
     })(),
+    shiftHours: shiftHoursFromDraft(d),
+    spreadEvenly: d.spreadEvenly || undefined,
+    preferredWindows: windowsFromDraft(d),
   };
 }
 
@@ -294,6 +334,17 @@ function EmployeeSummaryRow({
         {emp.desiredDaysPerWeek ? (
           <span className="text-slate-400">· {emp.desiredDaysPerWeek} ngày/tuần</span>
         ) : null}
+        {emp.shiftHours && (
+          <span className="text-teal-700">
+            · ca {emp.shiftHours.min}–{emp.shiftHours.max}h
+          </span>
+        )}
+        {emp.spreadEvenly && <span className="text-teal-700">· rải đều</span>}
+        {preferredWindowsOf(emp).length > 0 && (
+          <span className="text-teal-700">
+            · ưu tiên {preferredWindowsOf(emp).map(describePreferredWindow).join(" + ")}
+          </span>
+        )}
         {(emp.startDate || emp.endDate) && (
           <span className="text-violet-700">
             · {employmentPeriodLabel(emp)}
@@ -756,6 +807,101 @@ function EmployeeSheet({
               )}
             </SheetSection>
           )}
+
+          <SheetSection title="Luật riêng (mềm – xếp theo khi được)">
+            <div>
+              <FieldLabel hint="bỏ trống = mặc định">Độ dài ca</FieldLabel>
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                <HoursInput decimal placeholder="từ" value={d.shiftMin} onChange={(v) => set("shiftMin", v)} />
+                <span className="text-slate-400">–</span>
+                <HoursInput decimal placeholder="đến" value={d.shiftMax} onChange={(v) => set("shiftMax", v)} />
+              </div>
+            </div>
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2.5">
+              <span className="text-sm text-slate-700">
+                Rải đều trong tháng
+                <span className="block text-xs text-slate-400">
+                  Tuần nào cũng có ca; có Độ dài ca thì ưu tiên nhiều ca ngắn.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={d.spreadEvenly}
+                onChange={(e) => set("spreadEvenly", e.target.checked)}
+                className="h-6 w-6 rounded border-slate-300"
+              />
+            </label>
+            <div className="space-y-2">
+              <FieldLabel hint="app ưu tiên xếp ngày và giờ vào đây">Khung giờ ưu tiên</FieldLabel>
+              {d.windows.map((w, i) => {
+                const update = (patch: Partial<Draft["windows"][number]>) =>
+                  set("windows", d.windows.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+                return (
+                  <div key={i} className="space-y-2 rounded-lg border border-slate-200 p-2">
+                    <div className="grid grid-cols-7 gap-1">
+                      {WEEKDAY_ORDER.map((weekday) => {
+                        const on = w.days.includes(weekday);
+                        return (
+                          <button
+                            key={weekday}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() =>
+                              update({ days: on ? w.days.filter((x) => x !== weekday) : [...w.days, weekday] })
+                            }
+                            className={`rounded-md border py-2 text-sm font-medium ${
+                              on ? "border-teal-700 bg-teal-700 text-white" : "border-slate-200 bg-white text-slate-600"
+                            }`}
+                          >
+                            {WEEKDAY_LABELS[weekday]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
+                      <input
+                        type="time"
+                        step={1800}
+                        className={`${inputClass} w-full`}
+                        value={w.start}
+                        onChange={(e) => update({ start: e.target.value })}
+                      />
+                      <span className="text-slate-400">–</span>
+                      <input
+                        type="time"
+                        step={1800}
+                        className={`${inputClass} w-full`}
+                        value={w.end}
+                        onChange={(e) => update({ end: e.target.value })}
+                      />
+                      <button
+                        type="button"
+                        aria-label="Xoá khung giờ"
+                        onClick={() => set("windows", d.windows.filter((_, k) => k !== i))}
+                        className="rounded-lg px-3 py-2.5 text-sm text-rose-600 hover:bg-rose-50"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {(w.days.length === 0 || w.end <= w.start) && (
+                      <p className="text-xs text-amber-700">
+                        {w.days.length === 0 ? "Chọn ít nhất một ngày." : "Giờ kết thúc phải sau giờ bắt đầu."}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() =>
+                  set("windows", [...d.windows, { days: [...WEEKDAY_ORDER], start: "12:00", end: "14:00" }])
+                }
+                className="w-full rounded-lg border border-dashed border-slate-300 px-3 py-2.5 text-left text-sm text-slate-600"
+              >
+                + Thêm khung giờ <span className="text-slate-400">(ví dụ T2–T6 10:30–15:00)</span>
+              </button>
+            </div>
+          </SheetSection>
 
           <SheetSection title="Thời gian làm việc">
             {!showPeriod ? (

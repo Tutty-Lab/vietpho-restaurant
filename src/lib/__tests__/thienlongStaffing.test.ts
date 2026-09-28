@@ -4,6 +4,7 @@ import { weekdayKeyOf, parseIsoDate, datesOfMonth } from "../demand";
 import { generateSchedule } from "../scheduler";
 import { validateSchedule } from "../validation";
 import { DEFAULT_WORK_HOURS } from "../workHours";
+import { isThienlongMonthRushDate, THIENLONG_MONTH_RUSH_WEIGHT } from "../thienlongDemand";
 
 const currentThienlongEmployees: Employee[] = [
   { id: "service-fixed", name: "Service fixed", employmentType: "VOLLZEIT", targetMinutes: 192 * 60, workRole: "SERVICE" },
@@ -81,7 +82,9 @@ describe("Thienlong staffing bands", () => {
         // Teilzeit/Minijob kommt nur noch 2–4 h zur Stoßzeit, zählt aber als
         // ganzer Kopf in der 6–7-Personen-Grenze – daher etwas Luft nach unten.
         expect(item.minutes / 60, date).toBeGreaterThanOrEqual(46);
-        expect(item.minutes / 60, date).toBeLessThanOrEqual(60);
+        // Monatswechsel-Tage sind bewusst etwas voller (Gewicht 1,15).
+        const cap = isThienlongMonthRushDate(date) ? 55 * THIENLONG_MONTH_RUSH_WEIGHT : 60;
+        expect(item.minutes / 60, date).toBeLessThanOrEqual(cap);
         quietHours.push(item.minutes / 60);
       } else {
         expect(item.people.size, date).toBeLessThanOrEqual(8);

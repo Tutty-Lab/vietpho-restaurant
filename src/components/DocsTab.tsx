@@ -210,8 +210,10 @@ export function DocsTab({ storeId }: { storeId: string }) {
             </table>
           </div>
           <p className="text-slate-600">
-            Từ lịch mẫu, thuật toán ưu tiên Bếp vào 12:00-13:00 và 18:00-20:00; Bồi
-            ưu tiên 12:00-13:30 và 18:00-20:00. Đây là <b>tỷ trọng ưu tiên</b>, không
+            Giờ cao điểm tối: <b>Thứ 2–5 18:00–20:30</b>, <b>Thứ 6, 7, Chủ Nhật (và ngày lễ)
+            18:00–21:00</b>. 17:00–18:00 chỉ là giờ khách bắt đầu vào, nên ca tối thường bắt
+            đầu 18:00 chứ không phải 17:00. Buổi trưa ưu tiên 12:00–14:00. Đây là{" "}
+            <b>tỷ trọng ưu tiên</b>, không
             bắt buộc cố định 3-4 người Bếp hay 2 người Bồi. Ca tối 16:30-22:00 được giữ
             đúng <b>5,5h</b> để lắp vừa khung.
             T6 và T7 là hai ngày đông nhất; Chủ Nhật chỉ nhỉnh hơn T2-T5. Tổng số người
@@ -234,6 +236,29 @@ export function DocsTab({ storeId }: { storeId: string }) {
           </ul>
         </Section>
       )}
+
+      <Section title="Luật riêng từng người (mềm)">
+        <p>
+          Trong form nhân viên, mục <b>Luật riêng</b> có hai cài đặt. App cố xếp theo, nhưng không phá luật
+          bắt buộc bên dưới (luôn có Bếp/Bồi, mở/đóng cửa, số người tối thiểu T6–CN).
+        </p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>
+            <b>Độ dài ca</b> (ví dụ 2–3h): mỗi ca của người đó nằm trong khoảng này; số ca trong tháng
+            tăng/giảm cho đủ định mức.
+          </li>
+          <li>
+            <b>Khung giờ ưu tiên</b> (ví dụ T2–T6 10:30–15:00, hoặc cả tuần 12:00–14:00 + 18:00–20:00):
+            app ưu tiên xếp người đó vào những ngày và giờ này. Có hai khung trong ngày thì người bán thời
+            gian cũng được xếp ca gãy theo hai khung.
+          </li>
+          <li>
+            <b>Rải đều trong tháng</b>: chia ca của người đó đều theo tuần (tính trên các ngày ưu tiên),
+            thay vì dồn vào tuần đang thiếu người. Có Độ dài ca thì app chọn nhiều ca ngắn hơn (ví dụ 10 ca
+            2h thay vì 8 ca 2,5h).
+          </li>
+        </ul>
+      </Section>
 
       <Section title="Nguyên tắc bắt buộc (luôn đúng)">
         <ul className="list-disc pl-5 space-y-1">
@@ -270,8 +295,9 @@ export function DocsTab({ storeId }: { storeId: string }) {
             Mỗi người phải đạt <b>đúng định mức tháng</b> (Sollstunden) — không thừa, không thiếu.
           </li>
           <li>
-            Ca liên tục trên 6 giờ có giờ nghỉ theo quy định. Với ca tách đôi Thứ 2–5, khoảng tiệm
-            đóng cửa 15:00–16:30 đã là thời gian nghỉ nên không trừ thêm Pause.
+            Ca liền trên 6 giờ công nghỉ <b>30 phút</b>, từ 8 giờ công trở lên nghỉ <b>60 phút</b>.
+            Ca tách đôi không trừ Pause vì quãng nghỉ giữa hai đoạn (ít nhất <b>1 giờ</b>, ví dụ
+            tiệm đóng cửa 15:00–16:30) đã là thời gian nghỉ.
           </li>
           <li>
             <b>Không xếp ai vào quãng đóng cửa.</b> Một ngày công có thể gồm hai đoạn nằm ở hai

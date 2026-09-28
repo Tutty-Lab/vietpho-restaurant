@@ -129,9 +129,34 @@ export function validateSchedule(
         date: shift.date,
         message: `Sai giờ nghỉ ngày ${shift.date}: ${shift.pauseMinutes} thay vì ${expectedPause} phút.`,
         kind: "shift",
-        reason: "Ca liền trên 6 giờ cần nghỉ 30 phút, trên 9 giờ cần 45 phút.",
+        reason: "Ca liền trên 6 giờ công nghỉ 30 phút, từ 8 giờ công trở lên nghỉ 60 phút.",
         suggestion: `Đặt nghỉ = ${expectedPause} phút, hoặc chia thành ca gãy (Ca 1 / Ca 2).`,
       });
+    }
+    // Ca tách đôi phải có quãng nghỉ thật ở giữa – hai đoạn sát nhau là ca liền
+    // và khi đó cần Pause như ca liền.
+    if (isSplit) {
+      const segs = [...shift.segments!].sort((a, b) => a.startMinutes - b.startMinutes);
+      for (let i = 1; i < segs.length; i++) {
+        const gap = segs[i].startMinutes - segs[i - 1].endMinutes;
+        if (gap >= 60) continue;
+        const pause = calculatePause(shift.paidMinutes);
+        errors.push({
+          employeeId: shift.employeeId,
+          date: shift.date,
+          message:
+            `Ca tách đôi ngày ${shift.date} (${segs.map((g) => `${minutesToTime(g.startMinutes)}–${minutesToTime(g.endMinutes)}`).join(" | ")}) ` +
+            `chỉ nghỉ giữa ${gap} phút – thực chất là ca liền ${shift.paidMinutes / 60}h.`,
+          kind: "shift",
+          severity: "warning",
+          reason: "Ca tách đôi không trừ Pause, nên hai đoạn phải cách nhau ít nhất 1 giờ.",
+          suggestion:
+            pause > 0
+              ? `Để cách nhau ≥ 1 giờ, hoặc gộp thành một ca liền với nghỉ ${pause} phút.`
+              : "Để cách nhau ≥ 1 giờ, hoặc gộp thành một ca liền.",
+        });
+        break;
+      }
     }
   }
 

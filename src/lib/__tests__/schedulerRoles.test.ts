@@ -108,12 +108,13 @@ describe("Thienlong role-aware scheduling", () => {
     const peakCentered = shifts.filter((shift) =>
       shift.segments?.some(
         (segment) =>
-          segment.startMinutes === 11 * 60 &&
-          segment.endMinutes === 14 * 60,
+          segment.startMinutes <= 12 * 60 &&
+          segment.endMinutes >= 14 * 60,
       ) && shift.segments?.some(
         (segment) =>
-          segment.startMinutes === 17 * 60 &&
-          segment.endMinutes === 20 * 60,
+          // Montag: Abendspitze 18:00–20:30.
+          segment.startMinutes <= 18 * 60 &&
+          segment.endMinutes >= 20 * 60 + 30,
       ),
     );
 

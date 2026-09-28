@@ -46,7 +46,8 @@ describe("Thienlong meal-window placement", () => {
     expect(
       segments.some(
         (segment) =>
-          segment.startMinutes <= 17 * 60 + 30 &&
+          // Montag: Abendspitze 18:00–20:30.
+          segment.startMinutes <= 18 * 60 &&
           segment.endMinutes >= 20 * 60 + 30,
       ),
     ).toBe(true);

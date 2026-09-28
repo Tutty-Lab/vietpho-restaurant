@@ -64,6 +64,17 @@ export const AZUBI_MONTHLY_WARNING_HOURS = 174;
 
 export type ShiftType = "EARLY" | "LATE" | "CUSTOM";
 
+/**
+ * „Khung giờ ưu tiên": Wunsch-Zeitfenster einer Person an bestimmten
+ * Wochentagen (z.B. T2–T6 10:30–15:00). WEICHE Regel – der Planer legt Tage
+ * und Stücke möglichst dort hin, bricht dafür aber keine harte Regel.
+ */
+export type PreferredWindow = {
+  days: WeekdayName[];
+  startMinutes: number;
+  endMinutes: number;
+};
+
 export type Employee = {
   id: string;
   name: string;
@@ -101,6 +112,23 @@ export type Employee = {
    * wie bisher die Nachfrage über die Tageszahl.
    */
   desiredDaysPerWeek?: number;
+  /**
+   * Khung giờ ưu tiên (weich). Ist mindestens ein Fenster gesetzt, bevorzugt
+   * der Planer die dort genannten Wochentage und legt die Arbeitszeit in die
+   * Fenster; Minuten außerhalb kosten einen Aufschlag.
+   */
+  preferredWindows?: PreferredWindow[];
+  /**
+   * „Độ dài ca": eigene Schichtlänge in Stunden (z.B. 2–3 h). Ohne Angabe gilt
+   * die Standardlänge der Anstellungsart.
+   */
+  shiftHours?: { min: number; max: number };
+  /**
+   * „Rải đều trong tháng" (weich): Einsätze möglichst gleichmäßig auf die
+   * Wochen verteilen statt sie dort zu bündeln, wo die Rolle gerade knapp ist.
+   * Mit „Độ dài ca" werden dafür lieber mehr, dafür kürzere Einsätze geplant.
+   */
+  spreadEvenly?: boolean;
   /**
    * Häkchen „Lưu" in der Mitarbeiterliste: vom Nutzer gesetzte Bestätigung,
    * dass die Daten dieser Person geprüft und übernommen sind. Rein als Merker

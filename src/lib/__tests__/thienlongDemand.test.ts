@@ -61,9 +61,9 @@ describe("Thienlong role demand profile", () => {
       { startMinutes: 10 * 60 + 30, endMinutes: 11 * 60, share: 0.5 / 38 },
       { startMinutes: 11 * 60, endMinutes: 14 * 60, share: 9 / 38 },
       { startMinutes: 14 * 60, endMinutes: 15 * 60, share: 1.5 / 38 },
-      { startMinutes: 16 * 60 + 30, endMinutes: 17 * 60, share: 0.5 / 38 },
-      { startMinutes: 17 * 60, endMinutes: 20 * 60, share: 10 / 38 },
-      { startMinutes: 20 * 60, endMinutes: 22 * 60, share: 2.5 / 38 },
+      { startMinutes: 16 * 60 + 30, endMinutes: 18 * 60, share: 1.5 / 38 },
+      { startMinutes: 18 * 60, endMinutes: 20 * 60 + 30, share: 9 / 38 },
+      { startMinutes: 20 * 60 + 30, endMinutes: 22 * 60, share: 2.5 / 38 },
     ]);
   });
 
@@ -83,10 +83,20 @@ describe("Thienlong role demand profile", () => {
   });
 
   it("treats the lunch and dinner windows as soft high-demand periods", () => {
-    expect(thienlongMealPeakIntervals()).toEqual([
-      { startMinutes: 12 * 60, endMinutes: 14 * 60 },
-      { startMinutes: 17 * 60, endMinutes: 20 * 60 },
-    ]);
+    // Abendspitze nicht ab 17:00: Mo–Do 18:00–20:30, Fr/Sa/So 18:00–21:00.
+    for (const day of ["monday", "tuesday", "wednesday", "thursday"] as const) {
+      expect(thienlongMealPeakIntervals(day)).toEqual([
+        { startMinutes: 12 * 60, endMinutes: 14 * 60 },
+        { startMinutes: 18 * 60, endMinutes: 20 * 60 + 30 },
+      ]);
+    }
+    for (const day of ["friday", "saturday", "sunday"] as const) {
+      expect(thienlongMealPeakIntervals(day)).toEqual([
+        { startMinutes: 12 * 60, endMinutes: 14 * 60 },
+        { startMinutes: 18 * 60, endMinutes: 21 * 60 },
+      ]);
+    }
+    expect(thienlongMealPeakIntervals("monday", true)[1].endMinutes).toBe(21 * 60);
 
     const peakDemand = thienlongMealPeakDemand(
       "monday",

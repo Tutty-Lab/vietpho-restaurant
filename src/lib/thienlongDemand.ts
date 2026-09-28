@@ -36,10 +36,22 @@ type ReferenceProfile = Record<WorkRole, readonly ReferenceInterval[]>;
 
 export const THIENLONG_REFERENCE_INVOICES = 150;
 
-const MEAL_PEAKS = [
-  { startMinutes: 12 * 60, endMinutes: 14 * 60 },
-  { startMinutes: 17 * 60, endMinutes: 20 * 60 },
-] as const;
+// Abendspitze laut Chef (Sept 2026): nicht schon ab 17:00. Mo–Do kommen die
+// Gäste 18:00–20:30, Fr/Sa/So (und Feiertage) später – 18:00–21:00.
+const LUNCH_PEAK = { startMinutes: 12 * 60, endMinutes: 14 * 60 } as const;
+const EVENING_PEAK_WEEKDAY = { startMinutes: 18 * 60, endMinutes: 20 * 60 + 30 } as const;
+const EVENING_PEAK_WEEKEND = { startMinutes: 18 * 60, endMinutes: 21 * 60 } as const;
+
+function isLateEveningDay(weekday: WeekdayKey, isHoliday: boolean): boolean {
+  return isHoliday || weekday === "friday" || weekday === "saturday" || weekday === "sunday";
+}
+
+function mealPeaksOf(weekday: WeekdayKey, isHoliday: boolean) {
+  return [
+    LUNCH_PEAK,
+    isLateEveningDay(weekday, isHoliday) ? EVENING_PEAK_WEEKEND : EVENING_PEAK_WEEKDAY,
+  ] as const;
+}
 
 // Anteil der Tagesstunden je Spitze (weiche Platzierungspriorität). Der Abend
 // (Index 1) wiegt bewusst SCHWERER als der Mittag (Index 0) – das Abendgeschäft
@@ -60,8 +72,9 @@ const referenceInterval = (
 // normiert). Sie bestimmen nur die FORM des Tages – wie viele echte Leute
 // daraus werden, ergibt sich aus dem tatsächlichen Team und seinen Stunden.
 //
-// Stoßzeiten laut Chef (Sept 2026): Mittag 11:00–14:00, Abend 17:00–20:00
-// (vorher 12–15 bzw. 17:30–20:30). Tagessummen je Rolle bleiben gleich.
+// Stoßzeiten laut Chef (Sept 2026): Mittag 11:00–14:00, Abend Mo–Do
+// 18:00–20:30, Fr/Sa/So 18:00–21:00. Tagessummen je Rolle bleiben gleich.
+// 17:00–18:00 ist nur Anlauf (dünn), nicht mehr Teil der Spitze.
 //
 // Mo–Do: Blocks 10:30–15:00 + 16:30–22:00. Öffnung/Schluss dünn.
 const WEEKDAY: ReferenceProfile = {
@@ -69,17 +82,17 @@ const WEEKDAY: ReferenceProfile = {
     referenceInterval(10 * 60 + 30, 11 * 60, 0.5), // Öffnung: dünn
     referenceInterval(11 * 60, 14 * 60, 9), // Mittag: Spitze
     referenceInterval(14 * 60, 15 * 60, 1.5),
-    referenceInterval(16 * 60 + 30, 17 * 60, 0.5),
-    referenceInterval(17 * 60, 20 * 60, 10), // Abend: Spitze
-    referenceInterval(20 * 60, 22 * 60, 2.5), // Schließung: dünn
+    referenceInterval(16 * 60 + 30, 18 * 60, 1.5), // Anlauf
+    referenceInterval(18 * 60, 20 * 60 + 30, 9), // Abend: Spitze
+    referenceInterval(20 * 60 + 30, 22 * 60, 2.5), // Schließung: dünn
   ],
   SERVICE: [
     referenceInterval(10 * 60 + 30, 11 * 60, 0.25),
     referenceInterval(11 * 60, 14 * 60, 5.25),
     referenceInterval(14 * 60, 15 * 60, 0.75),
-    referenceInterval(16 * 60 + 30, 17 * 60, 0.5),
-    referenceInterval(17 * 60, 20 * 60, 6),
-    referenceInterval(20 * 60, 22 * 60, 1.25),
+    referenceInterval(16 * 60 + 30, 18 * 60, 1),
+    referenceInterval(18 * 60, 20 * 60 + 30, 5.5),
+    referenceInterval(20 * 60 + 30, 22 * 60, 1.25),
   ],
 };
 
@@ -89,15 +102,17 @@ const FRIDAY: ReferenceProfile = {
     referenceInterval(10 * 60 + 30, 11 * 60, 0.5),
     referenceInterval(11 * 60, 14 * 60, 7),
     referenceInterval(14 * 60, 17 * 60, 2.5),
-    referenceInterval(17 * 60, 20 * 60, 11), // Spitze
-    referenceInterval(20 * 60, 22 * 60, 3),
+    referenceInterval(17 * 60, 18 * 60, 1.5),
+    referenceInterval(18 * 60, 21 * 60, 10.5), // Spitze
+    referenceInterval(21 * 60, 22 * 60, 2),
   ],
   SERVICE: [
     referenceInterval(10 * 60 + 30, 11 * 60, 0.25),
     referenceInterval(11 * 60, 14 * 60, 4),
     referenceInterval(14 * 60, 17 * 60, 1.5),
-    referenceInterval(17 * 60, 20 * 60, 6.5),
-    referenceInterval(20 * 60, 22 * 60, 1.75),
+    referenceInterval(17 * 60, 18 * 60, 1),
+    referenceInterval(18 * 60, 21 * 60, 5.75),
+    referenceInterval(21 * 60, 22 * 60, 1.5),
   ],
 };
 
@@ -106,14 +121,16 @@ const WEEKEND: ReferenceProfile = {
   KITCHEN: [
     referenceInterval(11 * 60 + 30, 14 * 60, 9.5), // Mittag: dicht
     referenceInterval(14 * 60, 17 * 60, 3),
-    referenceInterval(17 * 60, 20 * 60, 11.5), // Abend: am dichtesten (> Mittag)
-    referenceInterval(20 * 60, 22 * 60, 2),
+    referenceInterval(17 * 60, 18 * 60, 1.5),
+    referenceInterval(18 * 60, 21 * 60, 10.5), // Abend: am dichtesten (> Mittag)
+    referenceInterval(21 * 60, 22 * 60, 1.5),
   ],
   SERVICE: [
     referenceInterval(11 * 60 + 30, 14 * 60, 5.5),
     referenceInterval(14 * 60, 17 * 60, 2),
-    referenceInterval(17 * 60, 20 * 60, 7), // Abend: mehr Bồi als mittags
-    referenceInterval(20 * 60, 22 * 60, 1.5),
+    referenceInterval(17 * 60, 18 * 60, 1),
+    referenceInterval(18 * 60, 21 * 60, 6), // Abend: mehr Bồi als mittags
+    referenceInterval(21 * 60, 22 * 60, 1.5),
   ],
 };
 
@@ -157,11 +174,15 @@ export function thienlongRoleShare(
   );
 }
 
-export function thienlongMealPeakIntervals(): readonly {
+/** Stoßzeiten [Mittag, Abend] eines Tages – der Abend hängt vom Wochentag ab. */
+export function thienlongMealPeakIntervals(
+  weekday: WeekdayKey,
+  isHoliday = false,
+): readonly {
   startMinutes: number;
   endMinutes: number;
 }[] {
-  return MEAL_PEAKS.map((peak) => ({ ...peak }));
+  return mealPeaksOf(weekday, isHoliday).map((peak) => ({ ...peak }));
 }
 
 /**
@@ -205,7 +226,7 @@ export function thienlongMealPeakDemand(
 ): readonly RoleDemandInterval[] {
   const roleMinutes =
     Math.max(0, totalTargetMinutes) * thienlongRoleShare(weekday, role, isHoliday);
-  return MEAL_PEAKS.map((peak, i) => ({
+  return mealPeaksOf(weekday, isHoliday).map((peak, i) => ({
     ...peak,
     personMinutes: roleMinutes * MEAL_PEAK_SHARES[i],
   }));

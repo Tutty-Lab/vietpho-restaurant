@@ -51,8 +51,9 @@ npm run preview  # Produktions-Build lokal ansehen
 
 - Max. **8 bezahlte Stunden** pro Tag, **ein Dienst** pro Mitarbeiter und Tag.
 - Höchstens **6 aufeinanderfolgende** Arbeitstage.
-- **Pause:** bis einschließlich 6 h = 0 Min, über 6 h = 30 Min
-  (Pause zählt **nicht** zum Soll).
+- **Pause:** bis einschließlich 6 h = 0 Min, über 6 h = 30 Min, ab 8 h = 60 Min
+  (Pause zählt **nicht** zum Soll). Geteilter Dienst: keine Pause, aber
+  mind. 1 h zwischen den Stücken.
 - Nachfrage-Gewichte pro Wochentag → mehr Stunden Fr/Sa, Sonntag abends.
   **Feiertage zählen wie Sonntag** (Nachfrage + Zeitfenster).
 - **Arbeitszeit-Fenster je Tag** (giờ làm): Früh am Fenster-Beginn, Spät am

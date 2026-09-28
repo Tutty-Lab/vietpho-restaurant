@@ -42,6 +42,13 @@ import {
   type TemplateType,
 } from "./shifts";
 import { consecutiveRunLengthWith, seededRandom } from "./consecutive";
+import {
+  isUnpreferredDay,
+  minutesOutsidePreferred,
+  ownShiftHourOptions,
+  ownShiftRangeMinutes,
+  preferredWindowsOn,
+} from "./preferredWindows";
 import { calculatePause, presenceFromPaid } from "./time";
 import {
   effectiveWeekdayKey,
@@ -582,7 +589,10 @@ function thienlongCandidates(
       preferredType === "EARLY" ? "LATE" : "EARLY",
     ),
   ];
-  const peaks = thienlongMealPeakIntervals();
+  const peaks = thienlongMealPeakIntervals(
+    weekdayKeyOf(parseIsoDate(isoDate)),
+    state.holidays.has(isoDate),
+  );
   const presence = presenceFromPaid(paidMinutes);
 
   for (const block of blocks) {
@@ -997,7 +1007,16 @@ function plannedShiftCount(state: SchedulerState, employee: Employee): number | 
     return !day.closed && maxPaidForDay(day) > 0 && matchesEmployeeDayRules(state, employee, d);
   }).length;
   // Höchstens 6 von 7 Tagen (6-Tage-Regel).
-  const count = teilzeitShiftCount(employee.targetMinutes / 60, Math.floor((openDays * 6) / 7));
+  const maxDays = Math.floor((openDays * 6) / 7);
+  let count = teilzeitShiftCount(employee.targetMinutes / 60, maxDays);
+  // „Độ dài ca": so viele Einsätze, dass jede Schicht in die eigene Länge passt.
+  const own = ownShiftRangeMinutes(employee);
+  if (own) {
+    count = Math.max(count, Math.ceil(employee.targetMinutes / own.max));
+    // „Rải đều": lieber mehr kurze Einsätze – dann gibt es jede Woche welche.
+    if (employee.spreadEvenly) count = Math.floor(employee.targetMinutes / own.min);
+    count = Math.min(count, Math.floor(employee.targetMinutes / own.min), maxDays);
+  }
   return count > 0 ? count : null;
 }
 
@@ -1229,6 +1248,64 @@ function placeRigidShifts(state: SchedulerState): void {
 }
 
 
+/** Tagesauswahl: Abzug für einen Tag ohne „Khung giờ ưu tiên" (≈ 8 h Rollen-Defizit). */
+const UNPREFERRED_DAY_PENALTY = 80;
+/** Tagestausch (repairDemand, in Soll-Minuten): Umzug auf einen Tag ohne Wunschfenster. */
+const UNPREFERRED_DAY_MOVE_COST = 2000;
+
+/** 1, wenn die Person „Khung giờ ưu tiên" hat, aber keins an diesem Datum. */
+function unpreferredOn(employee: Employee, isoDate: string): number {
+  return isUnpreferredDay(employee, weekdayKeyOf(parseIsoDate(isoDate))) ? 1 : 0;
+}
+
+/** Tagesauswahl: Gewicht je Einsatz Abweichung vom fairen Wochenanteil („Rải đều"). */
+const SPREAD_DAY_PENALTY = 40;
+/** Tagestausch (repairDemand, in Soll-Minuten) je Einsatz Abweichung („Rải đều"). */
+const SPREAD_MOVE_COST = 1000;
+
+/**
+ * „Rải đều trong tháng": Σ über die Wochen |Einsätze − fairer Anteil|, fairer
+ * Anteil = geplante Einsätze × (Arbeitstage der Woche / Arbeitstage im Monat).
+ * 0 für alle ohne diese Einstellung.
+ */
+function spreadCost(state: SchedulerState, employee: Employee, worked: ReadonlySet<string>): number {
+  if (!employee.spreadEvenly) return 0;
+  // Mit „Khung giờ ưu tiên" zählen nur die Wunschtage (sonst z.B. auch Sonntage).
+  const eligible = state.dates.filter((d) => {
+    const day = state.dayOf(d);
+    return !day.closed && maxPaidForDay(day) > 0 && matchesEmployeeDayRules(state, employee, d) &&
+      unpreferredOn(employee, d) === 0;
+  });
+  if (eligible.length === 0) return 0;
+  const planned = state.plannedShifts.get(employee.id) ?? worked.size;
+  const weeks = new Map<string, { days: number; count: number }>();
+  const entry = (d: string) => {
+    const k = weekKeyOf(d);
+    if (!weeks.has(k)) weeks.set(k, { days: 0, count: 0 });
+    return weeks.get(k)!;
+  };
+  for (const d of eligible) entry(d).days += 1;
+  for (const d of worked) entry(d).count += 1;
+  let cost = 0;
+  for (const w of weeks.values()) cost += Math.abs(w.count - (planned * w.days) / eligible.length);
+  return cost;
+}
+
+/** Änderung von spreadCost, wenn ein Einsatz von `from` nach `to` wandert (null = neu/weg). */
+function spreadDelta(
+  state: SchedulerState,
+  employee: Employee,
+  from: string | null,
+  to: string | null,
+): number {
+  if (!employee.spreadEvenly) return 0;
+  const worked = state.worked.get(employee.id)!;
+  const next = new Set(worked);
+  if (from) next.delete(from);
+  if (to) next.add(to);
+  return spreadCost(state, employee, next) - spreadCost(state, employee, worked);
+}
+
 function placeOneShift(state: SchedulerState, employee: Employee): boolean {
   const remaining = state.remaining.get(employee.id)!;
   if (remaining <= 0) return false;
@@ -1350,13 +1427,14 @@ function placeOneShift(state: SchedulerState, employee: Employee): boolean {
           paceHours * (1 + (pacedWeight / avgEligibleWeight - 1) * 0.6) +
             (state.varyLengths ? (state.rng() - 0.5) * 0.5 : 0),
           paceFloorHours,
-          employee.employmentType === "TEILZEIT" && state.isThienlong
-            ? TEILZEIT_SHIFT_HOURS
-            : undefined,
+          ownShiftHourOptions(employee) ??
+            (employee.employmentType === "TEILZEIT" && state.isThienlong
+              ? TEILZEIT_SHIFT_HOURS
+              : undefined),
         )
       : chooseShiftHours(
           remaining,
-          dayCapMinutes / 60,
+          Math.min(dayCapMinutes, ownShiftRangeMinutes(employee)?.max ?? Infinity) / 60,
           employee.employmentType,
           needHours,
           state.varyLengths ? state.rng : undefined,
@@ -1402,6 +1480,13 @@ function placeOneShift(state: SchedulerState, employee: Employee): boolean {
         ? ((weekUsed.get(weekKey) ?? 0) / 60) * 2
         : 0;
 
+    // „Khung giờ ưu tiên": Tage ohne Wunschfenster nur, wenn es sonst nicht geht.
+    const unpreferredPenalty = isUnpreferredDay(employee, weekdayKeyOf(parseIsoDate(isoDate)))
+      ? UNPREFERRED_DAY_PENALTY
+      : 0;
+    // „Rải đều": Wochen über dem fairen Anteil meiden, leere Wochen bevorzugen.
+    const spreadPenalty = spreadDelta(state, employee, null, isoDate) * SPREAD_DAY_PENALTY;
+
     const jitter = state.rng() * 0.01; // deterministisch (seeded), nur Tie-Break
 
     const score =
@@ -1412,7 +1497,9 @@ function placeOneShift(state: SchedulerState, employee: Employee): boolean {
       weekBalancePenalty +
       staffingGap * 10 -
       staffingOverflow * 3 +
-      uncoveredRoleHours * 1.5 +
+      uncoveredRoleHours * 1.5 -
+      unpreferredPenalty -
+      spreadPenalty +
       jitter;
 
     if (score > bestScore) {
@@ -1477,6 +1564,7 @@ function extendExistingShiftsToTargets(
           const dayCapacity = Math.min(
             maxPaidForDay(state.dayOf(shift.date)),
             state.isVietpho ? 8 * 60 : MAX_DAILY_MINUTES,
+            ownShiftRangeMinutes(employee)?.max ?? Infinity,
           );
           const weekCap = weeklyCapMinutes(employee);
           const weekUsed = state.weekMinutes.get(employee.id)?.get(weekKeyOf(shift.date)) ?? 0;
@@ -1596,6 +1684,9 @@ function repairThienlongStaffing(state: SchedulerState): void {
         trialWorked.delete(from);
         if (consecutiveRunLengthWith(trialWorked, to) > 6) continue;
         if (exceedsWeeklyDayCap(state, employee, from, to)) continue;
+        // Kopfzahl-Band ist weich – nie dafür vom Wunschtag weg („Khung giờ ưu tiên").
+        if (unpreferredOn(employee, to) > unpreferredOn(employee, from)) continue;
+        if (spreadDelta(state, employee, from, to) > 1e-9) continue; // „Rải đều" nicht verschlechtern
 
         const weekCap = weeklyCapMinutes(employee);
         if (weekCap !== null) {
@@ -1669,7 +1760,9 @@ function repairDemand(state: SchedulerState, employeesById: Map<string, Employee
             weekdayKeyOf(parseIsoDate(to)),
             state.holidays.has(to),
           );
-          if (state.dateState.get(to)!.count >= profile.maxStaff + state.extraStaff) continue;
+          // Kopf-Obergrenze ist weich: für „Rải đều" darf ein Einsatz sie um 1 überschreiten.
+          const cap = profile.maxStaff + state.extraStaff + (spreadDelta(state, employee, from, to) < -0.5 ? 1 : 0);
+          if (state.dateState.get(to)!.count >= cap) continue;
         }
         // Regeln prüfen, als ob die alte Schicht bereits entfernt wäre.
         const trial = new Set(worked);
@@ -1702,7 +1795,11 @@ function repairDemand(state: SchedulerState, employeesById: Map<string, Employee
             roleDeviation(state, role, from) -
             roleDeviation(state, role, to)
           : 0;
-        const delta = newCostFrom + newCostTo - (oldCostFrom + oldCostTo) + roleDelta;
+        // „Khung giờ ưu tiên": Umzug auf einen Wunschtag lohnt, weg davon kostet.
+        const preferenceDelta =
+          (unpreferredOn(employee, to) - unpreferredOn(employee, from)) * UNPREFERRED_DAY_MOVE_COST +
+          spreadDelta(state, employee, from, to) * SPREAD_MOVE_COST;
+        const delta = newCostFrom + newCostTo - (oldCostFrom + oldCostTo) + roleDelta + preferenceDelta;
         if (delta < bestDelta) {
           bestDelta = delta;
           bestTarget = to;
@@ -1910,6 +2007,10 @@ function repairContinuousCoverage(state: SchedulerState): void {
               if (!(t >= ns && t < ne) && !coveredBy(others, t)) { vacatedOk = false; break; }
             }
             if (!vacatedOk) continue;
+            if (e.shift.segments && e.shift.segments.length > 1) {
+              const segs = e.shift.segments.map((g, k) => (k === e.i ? { startMinutes: ns, endMinutes: ne } : g));
+              if (!hasRealSplitBreak(segs)) continue;
+            }
             setSegment(e.shift, e.i, ns, ne);
             fixed = true;
             break;
@@ -1938,6 +2039,27 @@ function repairContinuousCoverage(state: SchedulerState): void {
 /** Aufschlag für ein Schichtstück, das keine Stoßzeit sauber abdeckt. */
 const NON_STANDARD_PIECE_PENALTY = 150;
 
+/**
+ * Aufschlag je Stunde außerhalb der „Khung giờ ưu tiên". Weich: kleiner als
+ * die harten Tagesregeln (Lücke 1000, Mindestköpfe 800, Abend ≥ Mittag 400).
+ */
+const PREFERRED_WINDOW_PENALTY_PER_HOUR = 80;
+
+/** Mindestpause zwischen den Stücken eines geteilten Dienstes. */
+const MIN_SPLIT_BREAK_MINUTES = 60;
+
+/**
+ * Ein geteilter Dienst braucht zwischen den Stücken eine echte Pause (≥ 1 h).
+ * Sonst wäre er in Wahrheit ein durchgehender Dienst – ohne die gesetzliche
+ * Pause, die ein Dienst am Stück hätte (z.B. 11:30–17:00 | 17:00–20:00).
+ */
+function hasRealSplitBreak(segs: readonly ShiftSegment[]): boolean {
+  const sorted = [...segs].sort((a, b) => a.startMinutes - b.startMinutes);
+  return sorted.every(
+    (g, i) => i === 0 || g.startMinutes - sorted[i - 1].endMinutes >= MIN_SPLIT_BREAK_MINUTES,
+  );
+}
+
 /** Stoßzeit-Fenster für Teilzeit/Minijob: Mittag bzw. Abend. */
 const TEILZEIT_PEAK_WINDOWS = [
   { startMinutes: 10 * 60 + 30, endMinutes: 15 * 60 },
@@ -1958,7 +2080,9 @@ function repairRoleGaps(state: SchedulerState): boolean {
   const SLOT = 30;
   const GAP_SHIFT_MAX = 6 * 60; // am Stück ohne Pause
   const minPaidOf = (e: Employee) =>
-    e.employmentType === "TEILZEIT" ? 2 * 60 : e.employmentType === "AZUBI" ? 3 * 60 : 5 * 60;
+    ownShiftRangeMinutes(e)?.min ??
+    (e.employmentType === "TEILZEIT" ? 2 * 60 : e.employmentType === "AZUBI" ? 3 * 60 : 5 * 60);
+  const maxPaidOf = (e: Employee) => Math.min(MAX_DAILY_MINUTES, ownShiftRangeMinutes(e)?.max ?? Infinity);
   const segmentsOf = (sh: Shift) =>
     sh.segments ?? [{ startMinutes: sh.startMinutes, endMinutes: sh.endMinutes }];
   const roleOf = (sh: Shift) => state.employeesById.get(sh.employeeId)?.workRole;
@@ -2082,9 +2206,19 @@ function repairRoleGaps(state: SchedulerState): boolean {
         }
         if (!gap) break;
 
+        // Wer die Lücke in seinem „Khung giờ ưu tiên" hat, kommt zuerst.
+        const weekday = weekdayKeyOf(parseIsoDate(date));
+        const gapSeg = [{ startMinutes: gap.start, endMinutes: gap.end }];
+        const offPreference = (e: Employee) => (minutesOutsidePreferred(e, weekday, gapSeg) > 0 ? 1 : 0);
+        // „Rải đều": ein zusätzlicher Tag in einer schon vollen Woche erst zuletzt.
+        const spreadWorse = (e: Employee) =>
+          !state.worked.get(e.id)!.has(date) && spreadDelta(state, e, null, date) > 0.5 ? 1 : 0;
         const candidates = [...state.employeesById.values()]
           .filter((e) => e.workRole === role && e.targetMinutes > 0)
-          .sort((a, b) => typeRank(a) - typeRank(b));
+          .sort((a, b) =>
+            offPreference(a) - offPreference(b) ||
+            spreadWorse(a) - spreadWorse(b) ||
+            typeRank(a) - typeRank(b));
         const gapCount = (list: Shift[]) => {
           let n = 0;
           for (const b of day.blocks) {
@@ -2119,6 +2253,7 @@ function repairRoleGaps(state: SchedulerState): boolean {
           if (gap.start >= g.endMinutes) g.endMinutes = Math.min(gap.end, g.startMinutes + GAP_SHIFT_MAX);
           else if (gap.end <= g.startMinutes) g.startMinutes = Math.max(gap.start, g.endMinutes - GAP_SHIFT_MAX);
           else continue;
+          if (!hasRealSplitBreak(segs)) continue;
           const paid = segs.reduce((a, x) => a + x.endMinutes - x.startMinutes, 0);
           const extra = paid - sh.paidMinutes;
           const next: Shift = {
@@ -2130,7 +2265,7 @@ function repairRoleGaps(state: SchedulerState): boolean {
             pauseMinutes: 0,
             shiftType: "CUSTOM",
           };
-          if (paid > MAX_DAILY_MINUTES || extra <= 0 || !weekOk(e, extra)) continue;
+          if (paid > maxPaidOf(e) || extra <= 0 || !weekOk(e, extra)) continue;
           if (gapCount(roleShifts.map((x) => (x === sh ? next : x))) >= gapCount(roleShifts)) continue;
           if (!takeFromOtherDays(e, date, extra)) continue;
           removeShift(state, sh);
@@ -2170,22 +2305,23 @@ function repairRoleGaps(state: SchedulerState): boolean {
             }
           }
           // Neuer bzw. verlängerter Einsatz am Stück, der die Lücke abdeckt.
+          const capOf = Math.min(GAP_SHIFT_MAX, maxPaidOf(e));
           let start = gap.start;
-          let end = Math.min(gap.end, gap.start + GAP_SHIFT_MAX);
+          let end = Math.min(gap.end, gap.start + capOf);
           if (existing) {
             if (existing.startMinutes < gap.block.startMinutes || existing.endMinutes > gap.block.endMinutes) continue;
-            if (existing.paidMinutes >= GAP_SHIFT_MAX) continue;
+            if (existing.paidMinutes >= capOf) continue;
             // Richtung Lücke verlängern, höchstens auf 6 h am Stück.
             if (gap.start >= existing.endMinutes) {
               start = existing.startMinutes;
-              end = Math.min(gap.end, existing.startMinutes + GAP_SHIFT_MAX);
+              end = Math.min(gap.end, existing.startMinutes + capOf);
             } else if (gap.end <= existing.startMinutes) {
               end = existing.endMinutes;
-              start = Math.max(gap.start, existing.endMinutes - GAP_SHIFT_MAX);
+              start = Math.max(gap.start, existing.endMinutes - capOf);
             } else {
               start = Math.min(gap.start, existing.startMinutes);
               end = Math.max(gap.end, existing.endMinutes);
-              if (end - start > GAP_SHIFT_MAX) continue;
+              if (end - start > capOf) continue;
             }
             // Deckt der verlängerte Einsatz den Lückenbeginn überhaupt ab?
             if (!(start <= gap.start && end > gap.start) && !(start < gap.end && end >= gap.end)) continue;
@@ -2237,6 +2373,7 @@ function repairRoleGaps(state: SchedulerState): boolean {
           if (done) break;
           const ea = state.employeesById.get(a.employeeId)!;
           const whole = Math.min(lunchEnd - lunchStart, GAP_SHIFT_MAX);
+          if (whole > maxPaidOf(ea)) continue; // „Độ dài ca" der Person zu kurz
           const aNew: Shift = {
             ...a,
             startMinutes: lunchStart,
@@ -2287,10 +2424,11 @@ function repairRoleGaps(state: SchedulerState): boolean {
   return changed;
 }
 
-/** Stoßzeiten eines Tages (Mittag ab Öffnung, spätestens 11:00 – 14:00; Abend 17–20). */
-function dayPeaks(day: ResolvedDay): { startMinutes: number; endMinutes: number }[] {
+/** Stoßzeiten eines Tages (Mittag 12–14; Abend Mo–Do 18–20:30, Fr–So 18–21). */
+function dayPeaks(state: SchedulerState, date: string): { startMinutes: number; endMinutes: number }[] {
+  const day = state.dayOf(date);
   if (day.closed || day.blocks.length === 0) return [];
-  return thienlongMealPeakIntervals()
+  return thienlongMealPeakIntervals(weekdayKeyOf(parseIsoDate(date)), state.holidays.has(date))
     .map((p) => ({
       startMinutes: Math.max(p.startMinutes, day.blocks[0].startMinutes),
       endMinutes: Math.min(p.endMinutes, day.blocks[day.blocks.length - 1].endMinutes),
@@ -2332,14 +2470,16 @@ function rebalanceForStandardShifts(state: SchedulerState): void {
     sh.segments ?? [{ startMinutes: sh.startMinutes, endMinutes: sh.endMinutes }];
   const roleOf = (sh: Shift) => state.employeesById.get(sh.employeeId)?.workRole;
   const minPaid = (e: Employee) =>
-    e.employmentType === "TEILZEIT" ? 2 * 60 : e.employmentType === "AZUBI" ? 3 * 60 : 5 * 60;
-  const maxPaid = (e: Employee) => (e.employmentType === "TEILZEIT" ? 4 * 60 : MAX_DAILY_MINUTES);
+    ownShiftRangeMinutes(e)?.min ??
+    (e.employmentType === "TEILZEIT" ? 2 * 60 : e.employmentType === "AZUBI" ? 3 * 60 : 5 * 60);
+  const maxPaid = (e: Employee) =>
+    ownShiftRangeMinutes(e)?.max ?? (e.employmentType === "TEILZEIT" ? 4 * 60 : MAX_DAILY_MINUTES);
 
   /** Qualität eines Tages: Lücken ≫ „Abend < Mittag" ≫ krumme Stücke. */
   const dayScore = (date: string): number => {
     const day = state.dayOf(date);
     if (day.closed) return 0;
-    const peaks = dayPeaks(day);
+    const peaks = dayPeaks(state, date);
     const shifts = state.shifts.filter((sh) => sh.date === date);
     let score = 0;
     for (const role of ["KITCHEN", "SERVICE"] as const) {
@@ -2355,6 +2495,12 @@ function rebalanceForStandardShifts(state: SchedulerState): void {
       score += 400 * Math.max(0, rs.filter(worksLunch).length - rs.filter(worksDinner).length);
     }
     for (const sh of shifts) for (const g of segmentsOf(sh)) if (!isStandardPiece(g, peaks)) score += 10;
+    // „Khung giờ ưu tiên": gleiche Gewichtung wie im Feinschliff.
+    const weekday = weekdayKeyOf(parseIsoDate(date));
+    for (const sh of shifts) {
+      const e = state.employeesById.get(sh.employeeId);
+      if (e) score += (minutesOutsidePreferred(e, weekday, segmentsOf(sh)) / 60) * PREFERRED_WINDOW_PENALTY_PER_HOUR;
+    }
     return score;
   };
 
@@ -2377,6 +2523,7 @@ function rebalanceForStandardShifts(state: SchedulerState): void {
       if (segs[i].startMinutes < block.startMinutes) return null;
       if (segs[i].endMinutes - segs[i].startMinutes < 2 * 60) return null;
       if (segs[i].endMinutes - segs[i].startMinutes > 6 * 60) return null;
+      if (!hasRealSplitBreak(segs)) return null;
       return { ...sh, segments: segs, paidMinutes: paid, pauseMinutes: 0,
         startMinutes: segs[0].startMinutes, endMinutes: segs[segs.length - 1].endMinutes };
     }
@@ -2419,7 +2566,7 @@ function rebalanceForStandardShifts(state: SchedulerState): void {
       if (trials >= MAX_TRIALS || outOfTime()) return finish();
       const dayX = state.dayOf(x);
       if (dayX.closed) continue;
-      const peaksX = dayPeaks(dayX);
+      const peaksX = dayPeaks(state, x);
       for (const role of ["KITCHEN", "SERVICE"] as const) {
         const onX = () => state.shifts.filter((sh) => sh.date === x && roleOf(sh) === role);
         if (!onX().some((sh) => segmentsOf(sh).some((g) => !isStandardPiece(g, peaksX)))) continue;
@@ -2509,8 +2656,9 @@ function optimizeThienlongPlacement(
     const slots: number[] = [];
     for (const b of day.blocks) for (let t = b.startMinutes; t + SLOT <= b.endMinutes; t += SLOT) slots.push(t);
     const slotIndex = new Map(slots.map((t, i) => [t, i]));
-    // Stoßzeiten des Tages (Mittag 11–14, Abend 17–20), auf die Öffnungszeit geschnitten.
-    const peaks = thienlongMealPeakIntervals()
+    // Stoßzeiten des Tages (Mittag 12–14, Abend Mo–Do 18–20:30 bzw. Fr–So
+    // 18–21), auf die Öffnungszeit geschnitten.
+    const peaks = thienlongMealPeakIntervals(weekday, isHoliday)
       .map((p) => ({
         startMinutes: Math.max(p.startMinutes, day.blocks[0].startMinutes),
         endMinutes: Math.min(p.endMinutes, day.blocks[day.blocks.length - 1].endMinutes),
@@ -2550,14 +2698,24 @@ function optimizeThienlongPlacement(
       penalty: number;
       apply: (sh: Shift) => void;
     };
-    const placementOf = (segs: ShiftSegment[], pause: number, split: boolean): Placement => {
+    const placementOf = (
+      segs: ShiftSegment[],
+      pause: number,
+      split: boolean,
+      employee?: Employee,
+    ): Placement => {
       const idx: number[] = [];
       for (const g of segs) for (let t = g.startMinutes; t + SLOT <= g.endMinutes; t += SLOT) {
         const i = slotIndex.get(t);
         if (i !== undefined) idx.push(i);
       }
       let penalty = 0;
+      // Nur der Ist-Stand kann so aussehen (Kandidaten halten MIN_GAP ein).
+      if (split && !hasRealSplitBreak(segs)) penalty += 1e6;
       if (split && day.blocks.length === 1) penalty += 0.3;
+      if (employee) {
+        penalty += (minutesOutsidePreferred(employee, weekday, segs) / 60) * PREFERRED_WINDOW_PENALTY_PER_HOUR;
+      }
       for (const g of segs) if (split && g.endMinutes - g.startMinutes < MIN_SPLIT_SEGMENT_MINUTES) penalty += 0.4;
       // „Ca chuẩn": jedes Stück ≥ 3 h umfasst eine Stoßzeit komplett, kürzere
       // Stücke liegen ganz in einer Stoßzeit. Sonst hoher Aufschlag – erlaubt
@@ -2588,8 +2746,9 @@ function optimizeThienlongPlacement(
     };
     const current = (sh: Shift): Placement => {
       const split = !!sh.segments && sh.segments.length > 1;
-      return placementOf(segmentsOf(sh).map((g) => ({ ...g })), sh.pauseMinutes, split);
+      return placementOf(segmentsOf(sh).map((g) => ({ ...g })), sh.pauseMinutes, split, employeeOf(sh));
     };
+    const employeeOf = (sh: Shift) => state.employeesById.get(sh.employeeId);
     const isPeakOnly = (sh: Shift) =>
       state.employeesById.get(sh.employeeId)?.employmentType === "TEILZEIT";
     const candidatesFor = (sh: Shift): Placement[] => {
@@ -2597,13 +2756,14 @@ function optimizeThienlongPlacement(
       const paid = sh.paidMinutes;
       const pause = calculatePause(paid);
       const presence = paid + pause;
+      const emp = employeeOf(sh);
       if (isPeakOnly(sh)) {
         // Teilzeit/Minijob: ein kurzer Einsatz am Stück, möglichst nur Mittag
         // ODER Abend. Außerhalb davon nur, wenn sonst niemand die Rolle
         // abdeckt (hoher Aufschlag, aber kleiner als ein leerer Slot).
         for (const b of day.blocks) {
           for (let start = b.startMinutes; start + presence <= b.endMinutes; start += SLOT) {
-            const pl = placementOf([{ startMinutes: start, endMinutes: start + presence }], pause, false);
+            const pl = placementOf([{ startMinutes: start, endMinutes: start + presence }], pause, false, emp);
             const inPeak = TEILZEIT_PEAK_WINDOWS.some(
               (w) => start >= w.startMinutes && start + presence <= w.endMinutes,
             );
@@ -2611,11 +2771,39 @@ function optimizeThienlongPlacement(
             out.push(pl);
           }
         }
+        // „Khung giờ ưu tiên" mit zwei Fenstern am Tag (z.B. 12–14 und 18–20):
+        // dann darf auch eine Teilzeitkraft geteilt arbeiten – je ein Stück
+        // (≥ 1 h) rund um ein Fenster; was übersteht, kostet den Aufschlag.
+        const windows = emp ? preferredWindowsOn(emp, weekday) : [];
+        const touches = (t: number, len: number, w: { startMinutes: number; endMinutes: number }) =>
+          t < w.endMinutes && t + len > w.startMinutes;
+        for (const w1 of windows) {
+          for (const w2 of windows) {
+            if (w2.startMinutes < w1.endMinutes + MIN_GAP) continue;
+            for (let first = 60; first <= paid - 60; first += SLOT) {
+              const second = paid - first;
+              for (const t1 of slots) {
+                if (!touches(t1, first, w1)) continue;
+                for (const t2 of slots) {
+                  if (!touches(t2, second, w2)) continue;
+                  if (t2 < t1 + first + MIN_GAP) continue;
+                  if (!blockOf(t1, t1 + first) || !blockOf(t2, t2 + second)) continue;
+                  out.push(placementOf(
+                    [{ startMinutes: t1, endMinutes: t1 + first }, { startMinutes: t2, endMinutes: t2 + second }],
+                    0,
+                    true,
+                    emp,
+                  ));
+                }
+              }
+            }
+          }
+        }
         return out;
       }
       for (const b of day.blocks) {
         for (let start = b.startMinutes; start + presence <= b.endMinutes; start += SLOT) {
-          out.push(placementOf([{ startMinutes: start, endMinutes: start + presence }], pause, false));
+          out.push(placementOf([{ startMinutes: start, endMinutes: start + presence }], pause, false, emp));
         }
       }
       for (let first = MIN_PIECE; first <= Math.min(MAX_PIECE, paid - MIN_PIECE); first += SLOT) {
@@ -2630,6 +2818,7 @@ function optimizeThienlongPlacement(
               [{ startMinutes: t1, endMinutes: t1 + first }, { startMinutes: t2, endMinutes: t2 + second }],
               0,
               true,
+              emp,
             ));
           }
         }

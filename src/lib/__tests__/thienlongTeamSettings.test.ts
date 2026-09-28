@@ -4,9 +4,10 @@ import { generateSchedule } from "../scheduler";
 import { teilzeitShiftCount } from "../splitTargetHours";
 import { DEFAULT_WORK_HOURS, resolveDay } from "../workHours";
 import { holidaysOf } from "../holidays";
+import { parseIsoDate, weekdayKeyOf } from "../demand";
 import { isEmployeeFixedDayOff } from "../fixedDaysOff";
 import { validateSchedule } from "../validation";
-import { isThienlongMonthRushDate } from "../thienlongDemand";
+import { isThienlongMonthRushDate, thienlongMealPeakIntervals } from "../thienlongDemand";
 import { withAutomaticAzubiTarget } from "../azubi";
 import { withEmploymentPeriodTarget } from "../employmentPeriod";
 import { applyRoleChanges, findRoleSwitchOptions } from "../suggestions";
@@ -167,14 +168,17 @@ describe("Thienlong with the real team settings", () => {
 });
 
 describe("standard shifts anchored on the peaks", () => {
-  it("keeps almost every shift piece standard (≥ 3 h covers 11–14 or 17–20, shorter lies inside)", () => {
+  it("keeps almost every shift piece standard (≥ 3 h covers a meal peak, shorter lies inside)", () => {
     const holidaysSet = holidaysOf(2026, "BW");
     let standard = 0;
     let all = 0;
     for (const s of shifts) {
       const day = resolveDay(DEFAULT_WORK_HOURS, s.date, holidaysSet, {});
       const open = day.blocks[0].startMinutes;
-      const peaks = [[Math.max(11 * 60, open), 14 * 60], [17 * 60, 20 * 60]];
+      // Stoßzeiten wie im Planer: Mittag 12–14, Abend Mo–Do 18:00–20:30,
+      // Fr/Sa/So und Feiertage 18:00–21:00.
+      const peaks = thienlongMealPeakIntervals(weekdayKeyOf(parseIsoDate(s.date)), holidaysSet.has(s.date))
+        .map((p) => [Math.max(p.startMinutes, open), p.endMinutes]);
       for (const g of s.segments ?? [s]) {
         all += 1;
         const len = g.endMinutes - g.startMinutes;
