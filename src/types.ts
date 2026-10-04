@@ -102,6 +102,12 @@ export type Employee = {
   canSwitchRole?: boolean;
   /** Rolle für einzelne Monate (Schlüssel yyyy-MM), sonst workRole. */
   roleByMonth?: Record<string, WorkRole>;
+  /**
+   * „Chỉ làm các ngày": HARTE Regel – nur an diesen Wochentagen einplanen
+   * (z. B. jemand, der nur an seinem freien Tag bei der anderen Filiale kommt).
+   * Leer/fehlend = alle Tage.
+   */
+  workDays?: WeekdayName[];
   /** Feste Ruhetage der jeweiligen Filiale; dort darf keine Schicht liegen. */
   fixedDaysOff?: WeekdayName[];
   /**

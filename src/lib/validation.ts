@@ -14,7 +14,7 @@ import { maxConsecutiveRun } from "./consecutive";
 import { datesOfMonth, parseIsoDate, weekdayKeyOf } from "./demand";
 import { holidaysOf, type HolidayState } from "./holidays";
 import { resolveDay, type OverrideMap, type WorkHoursConfig } from "./workHours";
-import { vietphoPeakIntervals } from "./vietphoDemand";
+import { vietphoGapRanges, vietphoGapSlots, vietphoGroupOf } from "./vietphoDemand";
 import { isEmployeeFixedDayOff } from "./fixedDaysOff";
 import { unavailableReason } from "./availability";
 import { azubiMonthCapacityBreakdown, type AzubiWeekCapacity } from "./scheduler";
@@ -285,30 +285,31 @@ export function validateSchedule(
       if (day.closed) continue;
 
       if (context.storeId === "vietpho") {
-        for (const peak of vietphoPeakIntervals()) {
-          const existsInWorkHours = day.blocks.some(
-            (block) =>
-              block.startMinutes <= peak.startMinutes && block.endMinutes >= peak.endMinutes,
-          );
-          if (!existsInWorkHours) continue;
-          const coveringCount = shifts.filter((shift) => {
-            if (shift.date !== date) return false;
-            return (shift.segments ?? [shift]).some(
-              (segment) =>
-                segment.startMinutes <= peak.startMinutes && segment.endMinutes >= peak.endMinutes,
-            );
-          }).length;
-          if (coveringCount < peak.minStaff) {
-            errors.push({
-              date,
-              kind: "coverage",
-              suggestion: "Dời một ca vào khung giờ cao điểm này hoặc kéo dài ca.",
-              message:
-                `Ngày ${date}: cần ít nhất ${peak.minStaff} nhân viên trong giờ cao điểm ` +
-                `${minutesToTime(peak.startMinutes)}–${minutesToTime(peak.endMinutes)} ` +
-                `(hiện có ${coveringCount}).`,
-            });
-          }
+        // 1 Bếp + 1 Bồi immer; Lücken übernimmt ein Chef – Hinweis, kein Fehler.
+        const gaps = vietphoGapSlots(
+          day.blocks,
+          shifts
+            .filter((shift) => shift.date === date)
+            .map((shift) => ({
+              group: vietphoGroupOf(employees.find((e) => e.id === shift.employeeId) ?? {}),
+              segments: shift.segments ?? [shift],
+            })),
+        );
+        for (const role of ["kitchen", "service"] as const) {
+          const ranges = vietphoGapRanges(gaps, role);
+          if (ranges.length === 0) continue;
+          errors.push({
+            date,
+            kind: "coverage",
+            severity: "warning",
+            message:
+              `Ngày ${date}: Chủ làm ${role === "kitchen" ? "Bếp" : "Bồi"} ` +
+              ranges
+                .map((r) => `${minutesToTime(r.startMinutes)}–${minutesToTime(r.endMinutes)}`)
+                .join(", ") +
+              ".",
+            reason: "Nhân viên không đủ giờ để luôn có 1 Bếp + 1 Bồi.",
+          });
         }
         continue;
       }

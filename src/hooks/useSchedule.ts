@@ -250,7 +250,7 @@ export function useSchedule() {
   const readiness = useMemo(
     () =>
       checkScheduleReadiness(schedule.employees, {
-        requireWorkRole: storeId === "thienlong",
+        requireWorkRole: storeId === "thienlong" || storeId === "vietpho",
         requireFixedDaysOff: storeId === "thienlong" || storeId === "vietpho",
         storeId,
         year: schedule.year,

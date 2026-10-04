@@ -78,6 +78,7 @@ type Draft = {
   daysPerWeek: string;
   saved: boolean;
   fixedDaysOff: WeekdayName[];
+  workDays: WeekdayName[];
   azubi: AzubiConfig;
   startDate: string;
   endDate: string;
@@ -98,6 +99,7 @@ function draftFrom(emp?: Employee): Draft {
     daysPerWeek: emp?.desiredDaysPerWeek ? String(emp.desiredDaysPerWeek) : "",
     saved: emp?.saved === true,
     fixedDaysOff: emp?.fixedDaysOff ?? [],
+    workDays: emp?.workDays ?? [],
     // Neue Azubis starten ohne Kỳ học (sonst wäre der Monat „Schule" = 0 h).
     azubi: emp?.azubi ? azubiConfigOf(emp.azubi) : { ...azubiConfigOf(undefined), inSchoolTerm: false },
     startDate: emp?.startDate ?? "",
@@ -159,6 +161,7 @@ function draftToEmployee(d: Draft): Omit<Employee, "id"> {
     // Gewünschte Arbeitstage/Woche: nur 1..7, sonst nicht gesetzt.
     desiredDaysPerWeek: desiredDaysFromDraft(d),
     canSwitchRole: d.canSwitchRole || undefined,
+    workDays: d.workDays.length > 0 && d.workDays.length < 7 ? WEEKDAY_ORDER.filter((x) => d.workDays.includes(x)) : undefined,
     // Monats-Rollen nur behalten, wenn umstellbar und abweichend von der Hauptrolle.
     roleByMonth: (() => {
       if (!d.canSwitchRole) return undefined;
@@ -469,7 +472,8 @@ function EmployeeSheet({
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((prev) => ({ ...prev, [k]: v }));
   const setAzubi = (patch: Partial<AzubiConfig>) => setD((prev) => ({ ...prev, azubi: { ...prev.azubi, ...patch } }));
 
-  const showWorkRole = storeId === "thienlong";
+  const showWorkRole = storeId === "thienlong" || storeId === "vietpho";
+  const isVietpho = storeId === "vietpho";
   const isAzubi = d.employmentType === "AZUBI";
   const stunden = Math.max(0, Math.round(Number(d.hours) || 0));
   const info = splitInfo(stunden, d.employmentType);
@@ -590,7 +594,9 @@ function EmployeeSheet({
                   <span className="text-sm text-slate-700">
                     Làm được cả Bếp và Bồi
                     <span className="block text-[11px] text-slate-400">
-                      Tháng thiếu người có thể cho làm vị trí kia cả tháng
+                      {isVietpho
+                        ? "Làm Bếp hoặc Bồi tuỳ chỗ thiếu trong ngày"
+                        : "Tháng thiếu người có thể cho làm vị trí kia cả tháng"}
                     </span>
                   </span>
                   <input
@@ -600,7 +606,7 @@ function EmployeeSheet({
                     className="h-6 w-6 rounded border-slate-300"
                   />
                 </label>
-                {d.canSwitchRole && (
+                {d.canSwitchRole && !isVietpho && (
                   <div className="border-t border-slate-100 px-3 py-2.5">
                     <FieldLabel>Tháng {month}/{year} làm</FieldLabel>
                     <Segmented<WorkRole>
@@ -727,6 +733,34 @@ function EmployeeSheet({
               )}
             </SheetSection>
           )}
+
+          <SheetSection title="Chỉ làm các ngày (để trống = mọi ngày)">
+            <div className="grid grid-cols-7 gap-1">
+              {WEEKDAY_ORDER.map((weekday) => {
+                const selected = d.workDays.includes(weekday);
+                return (
+                  <button
+                    key={weekday}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() =>
+                      set(
+                        "workDays",
+                        selected ? d.workDays.filter((x) => x !== weekday) : [...d.workDays, weekday],
+                      )
+                    }
+                    className={`rounded-md border py-2.5 text-sm font-medium transition-colors ${
+                      selected
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-600"
+                    }`}
+                  >
+                    {WEEKDAY_LABELS[weekday]}
+                  </button>
+                );
+              })}
+            </div>
+          </SheetSection>
 
           {isAzubi && (
             <SheetSection title="Kỳ học (đi học không xếp ca)">

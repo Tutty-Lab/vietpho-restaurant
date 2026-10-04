@@ -103,3 +103,93 @@ export function vietphoLateShiftRatio(weekday: WeekdayKey, isHoliday = false): n
   if (weekday === "sunday") return 0.63;
   return 0.61;
 }
+
+// ---------------------------------------------------------------------------
+// Bếp/Bồi (Okt 2026): Viet Pho braucht in JEDER offenen Minute 1 Bếp + 1 Bồi.
+// Bồi-only (workRole SERVICE ohne „Làm được cả Bếp và Bồi") deckt nur Bồi.
+// Alle anderen sind FLEX: einer davon kocht, ein zweiter FLEX serviert.
+// Was niemand deckt, übernimmt einer der beiden Chefs („Chủ làm") – kein Fehler.
+// ---------------------------------------------------------------------------
+
+export type VietphoGroup = "FLEX" | "SERVICE";
+
+export function vietphoGroupOf(employee: {
+  workRole?: "KITCHEN" | "SERVICE";
+  canSwitchRole?: boolean;
+}): VietphoGroup {
+  return employee.workRole === "SERVICE" && !employee.canSwitchRole ? "SERVICE" : "FLEX";
+}
+
+export const VIETPHO_SLOT_MINUTES = 15;
+/** Ein Bếp kann nur ein FLEX sein – darum zählt eine Bếp-Lücke doppelt. */
+export const VIETPHO_KITCHEN_GAP_WEIGHT = 2;
+
+export type VietphoPresence = {
+  group: VietphoGroup;
+  segments: readonly { startMinutes: number; endMinutes: number }[];
+};
+
+export type VietphoGapSlot = {
+  startMinutes: number;
+  endMinutes: number;
+  kitchen: boolean;
+  service: boolean;
+};
+
+/** Offene Zeitstücke (15 min), in denen Bếp und/oder Bồi fehlt. */
+export function vietphoGapSlots(
+  blocks: readonly { startMinutes: number; endMinutes: number }[],
+  presence: readonly VietphoPresence[],
+): VietphoGapSlot[] {
+  const gaps: VietphoGapSlot[] = [];
+  for (const block of blocks) {
+    for (let t = block.startMinutes; t < block.endMinutes; t += VIETPHO_SLOT_MINUTES) {
+      const end = Math.min(t + VIETPHO_SLOT_MINUTES, block.endMinutes);
+      let flex = 0;
+      let service = 0;
+      for (const p of presence) {
+        if (!p.segments.some((s) => s.startMinutes <= t && s.endMinutes >= end)) continue;
+        if (p.group === "FLEX") flex++;
+        else service++;
+      }
+      const kitchenMissing = flex < 1;
+      const serviceMissing = service < 1 && flex < 2;
+      if (kitchenMissing || serviceMissing) {
+        gaps.push({ startMinutes: t, endMinutes: end, kitchen: kitchenMissing, service: serviceMissing });
+      }
+    }
+  }
+  return gaps;
+}
+
+/** Gewichtete fehlende Minuten (Bếp ×2, Bồi ×1). */
+export function vietphoGapScore(gaps: readonly VietphoGapSlot[]): number {
+  return gaps.reduce(
+    (sum, g) =>
+      sum +
+      (g.endMinutes - g.startMinutes) *
+        ((g.kitchen ? VIETPHO_KITCHEN_GAP_WEIGHT : 0) + (g.service ? 1 : 0)),
+    0,
+  );
+}
+
+/** Fehlende Minuten, die diese Gruppe überhaupt schließen könnte. */
+export function vietphoGapScoreFor(group: VietphoGroup, gaps: readonly VietphoGapSlot[]): number {
+  if (group === "FLEX") return vietphoGapScore(gaps);
+  return gaps.reduce((sum, g) => sum + (g.service ? g.endMinutes - g.startMinutes : 0), 0);
+}
+
+/** Zusammenhängende Lücken je Rolle als Zeitspannen, für Hinweise „Chủ làm". */
+export function vietphoGapRanges(
+  gaps: readonly VietphoGapSlot[],
+  role: "kitchen" | "service",
+): { startMinutes: number; endMinutes: number }[] {
+  const ranges: { startMinutes: number; endMinutes: number }[] = [];
+  for (const g of gaps) {
+    if (!g[role]) continue;
+    const last = ranges[ranges.length - 1];
+    if (last && last.endMinutes === g.startMinutes) last.endMinutes = g.endMinutes;
+    else ranges.push({ startMinutes: g.startMinutes, endMinutes: g.endMinutes });
+  }
+  return ranges;
+}

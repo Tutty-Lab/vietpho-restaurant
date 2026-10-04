@@ -73,10 +73,14 @@ import {
   thienlongStaffingProfile,
 } from "./thienlongDemand";
 import {
-  vietphoDemandIntervals,
   vietphoDemandWeight,
   vietphoLateShiftRatio,
   vietphoPeakIntervals,
+  vietphoGapScore,
+  vietphoGapScoreFor,
+  vietphoGapSlots,
+  vietphoGroupOf,
+  type VietphoPresence,
 } from "./vietphoDemand";
 
 export type GenerateInput = {
@@ -475,36 +479,20 @@ function roleShiftsOnDate(
   );
 }
 
-function vietphoDemandOf(state: SchedulerState, isoDate: string) {
-  if (!state.isVietpho) return null;
-  return clipDemandIntervals(
-    vietphoDemandIntervals(
-      weekdayKeyOf(parseIsoDate(isoDate)),
-      state.rawTarget.get(isoDate) ?? 0,
-      state.holidays.has(isoDate),
-    ),
-    state.dayOf(isoDate).blocks,
-  );
-}
-
 function vietphoShiftsOnDate(state: SchedulerState, isoDate: string): Shift[] {
   return state.shifts.filter((shift) => shift.date === isoDate);
 }
 
-function vietphoPeakDemand(state: SchedulerState, isoDate: string) {
-  const blocks = state.dayOf(isoDate).blocks;
-  return vietphoPeakIntervals()
-    .filter((peak) =>
-      blocks.some(
-        (block) =>
-          block.startMinutes <= peak.startMinutes && block.endMinutes >= peak.endMinutes,
-      ),
-    )
-    .map((peak) => ({
-      startMinutes: peak.startMinutes,
-      endMinutes: peak.endMinutes,
-      personMinutes: (peak.endMinutes - peak.startMinutes) * peak.minStaff,
-    }));
+function vietphoPresenceOf(state: SchedulerState, shifts: readonly Shift[]): VietphoPresence[] {
+  return shifts.map((shift) => ({
+    group: vietphoGroupOf(state.employeesById.get(shift.employeeId) ?? {}),
+    segments: shift.segments ?? [shift],
+  }));
+}
+
+/** Gewichtete Bếp/Bồi-Lücke des Tages mit diesen Schichten. */
+function vietphoDayGapScore(state: SchedulerState, isoDate: string, shifts: readonly Shift[]): number {
+  return vietphoGapScore(vietphoGapSlots(state.dayOf(isoDate).blocks, vietphoPresenceOf(state, shifts)));
 }
 
 function customContinuousShift(
@@ -769,31 +757,13 @@ function makeVietphoDemandAwareShift(
   isoDate: string,
   paidMinutes: number,
 ): Shift {
-  const demand = vietphoDemandOf(state, isoDate) ?? [];
-  const peakDemand = vietphoPeakDemand(state, isoDate);
   const existing = vietphoShiftsOnDate(state, isoDate);
   const candidates = vietphoCandidates(state, employee, isoDate, paidMinutes);
-
-  return candidates.reduce((best, candidate) => {
-    const bestScore =
-      demandCoverageGain(best, existing, demand) +
-      demandCoverageGain(best, existing, peakDemand) * 8;
-    const candidateScore =
-      demandCoverageGain(candidate, existing, demand) +
-      demandCoverageGain(candidate, existing, peakDemand) * 8;
-    return candidateScore > bestScore ? candidate : best;
-  });
-}
-
-function shiftCoversInterval(
-  shift: Shift,
-  interval: { startMinutes: number; endMinutes: number },
-): boolean {
-  return (shift.segments ?? [shift]).some(
-    (segment) =>
-      segment.startMinutes <= interval.startMinutes &&
-      segment.endMinutes >= interval.endMinutes,
-  );
+  const scored = candidates.map((candidate) => ({
+    candidate,
+    gap: vietphoDayGapScore(state, isoDate, [...existing, candidate]),
+  }));
+  return scored.reduce((best, item) => (item.gap < best.gap ? item : best)).candidate;
 }
 
 function replaceShiftPlacement(state: SchedulerState, shift: Shift, candidate: Shift): void {
@@ -808,53 +778,34 @@ function replaceShiftPlacement(state: SchedulerState, shift: Shift, candidate: S
   if (shift.shiftType === "LATE") ds.latePaid += shift.paidMinutes;
 }
 
-/** Repositions existing Vietpho shifts without changing dates or paid hours. */
-function balanceVietphoPeaks(state: SchedulerState): void {
+/**
+ * Schiebt Viet-Pho-Schichten innerhalb ihres Tages (gleiches Datum, gleiche
+ * bezahlte Zeit), solange die Bếp/Bồi-Lücke dadurch kleiner wird.
+ */
+function balanceVietphoCoverage(state: SchedulerState): void {
   for (const isoDate of state.dates) {
-    const peaks = vietphoPeakDemand(state, isoDate).map((peak) => ({
-      startMinutes: peak.startMinutes,
-      endMinutes: peak.endMinutes,
-      minStaff: Math.round(peak.personMinutes / (peak.endMinutes - peak.startMinutes)),
-    }));
     const onDay = state.shifts.filter((shift) => shift.date === isoDate);
-    if (peaks.length === 0 || onDay.length === 0) continue;
-
-    const count = (peak: (typeof peaks)[number], without?: Shift, withShift?: Shift) =>
-      onDay.reduce(
-        (total, shift) =>
-          total + (shift !== without && shiftCoversInterval(shift, peak) ? 1 : 0),
-        withShift && shiftCoversInterval(withShift, peak) ? 1 : 0,
-      );
-
-    for (const peak of peaks) {
-      while (count(peak) < peak.minStaff) {
-        let best: { shift: Shift; candidate: Shift; score: number } | null = null;
-        for (const shift of onDay) {
-          if (shiftCoversInterval(shift, peak)) continue;
-          const employee = state.employeesById.get(shift.employeeId)!;
-          for (const candidate of vietphoCandidates(
-            state,
-            employee,
-            isoDate,
-            shift.paidMinutes,
-          )) {
-            if (!shiftCoversInterval(candidate, peak)) continue;
-            const preservesCoveredPeaks = peaks.every(
-              (otherPeak) =>
-                count(otherPeak) < otherPeak.minStaff ||
-                count(otherPeak, shift, candidate) >= otherPeak.minStaff,
-            );
-            if (!preservesCoveredPeaks) continue;
-            const score = peaks.reduce(
-              (total, otherPeak) => total + count(otherPeak, shift, candidate),
-              0,
-            );
-            if (!best || score > best.score) best = { shift, candidate, score };
+    if (onDay.length === 0) continue;
+    for (let pass = 0; pass < 4; pass++) {
+      let improved = false;
+      for (const shift of onDay) {
+        const employee = state.employeesById.get(shift.employeeId)!;
+        const others = onDay.filter((other) => other !== shift);
+        let bestGap = vietphoDayGapScore(state, isoDate, onDay);
+        let best: Shift | null = null;
+        for (const candidate of vietphoCandidates(state, employee, isoDate, shift.paidMinutes)) {
+          const gap = vietphoDayGapScore(state, isoDate, [...others, candidate]);
+          if (gap < bestGap) {
+            bestGap = gap;
+            best = candidate;
           }
         }
-        if (!best) break;
-        replaceShiftPlacement(state, best.shift, best.candidate);
+        if (best) {
+          replaceShiftPlacement(state, shift, best);
+          improved = true;
+        }
       }
+      if (!improved) break;
     }
   }
 }
@@ -887,9 +838,8 @@ function makeRoleAwareShift(
 function roleGapHours(state: SchedulerState, employee: Employee, isoDate: string): number {
   if (state.isVietpho) {
     const existing = vietphoShiftsOnDate(state, isoDate);
-    const demandGap = demandCoverageGap(existing, vietphoDemandOf(state, isoDate) ?? []);
-    const peakGap = demandCoverageGap(existing, vietphoPeakDemand(state, isoDate));
-    return (demandGap + peakGap * 8) / 60;
+    const gaps = vietphoGapSlots(state.dayOf(isoDate).blocks, vietphoPresenceOf(state, existing));
+    return vietphoGapScoreFor(vietphoGroupOf(employee), gaps) / 60;
   }
   const demand = roleDemandOf(state, employee, isoDate);
   if (!demand) return 0;
@@ -3549,7 +3499,7 @@ export function generateSchedule(input: GenerateInput): Shift[] {
   if (state.isThienlong && (state.useThienlongStaffingBands || state.useThienlongStaffingCounts)) {
     repairThienlongStaffing(state);
   }
-  if (state.isVietpho) balanceVietphoPeaks(state);
+  if (state.isVietpho) balanceVietphoCoverage(state);
   else balanceShiftTypes(state);
   // Jede Rolle kommt an jedem offenen Tag mindestens einmal vor.
   repairRoleDayPresence(state);

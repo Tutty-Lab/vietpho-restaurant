@@ -163,11 +163,11 @@ describe("Vietpho scheduling profile", () => {
         storeId: "vietpho",
         workHours,
         holidayState: "BW",
-      }).errors,
+      }).errors.filter((error) => error.severity !== "warning"),
     ).toEqual([]);
   });
 
-  it("validates Vietpho peaks instead of the Thienlong pre-opening rule", () => {
+  it("reports missing Bếp/Bồi as 'Chủ làm' hints instead of the Thienlong pre-opening rule", () => {
     const workHours = defaultWorkHoursForStore("vietpho");
     const shifts = generateSchedule({
       year: 2026,
@@ -186,7 +186,9 @@ describe("Vietpho scheduling profile", () => {
       holidayState: "BW" as const,
     };
 
-    expect(validateSchedule(employees, shifts, context).errors).toEqual([]);
+    expect(
+      validateSchedule(employees, shifts, context).errors.filter((e) => e.severity !== "warning"),
+    ).toEqual([]);
 
     const date = "2026-08-03";
     const dinner = vietphoPeakIntervals()[1];
@@ -203,6 +205,7 @@ describe("Vietpho scheduling profile", () => {
     );
     const errors = validateSchedule(employees, invalid, context).errors;
 
-    expect(errors.some((error) => error.message.includes("18:00–20:00"))).toBe(true);
+    const hint = errors.find((error) => error.date === date && error.message.includes("Chủ làm"));
+    expect(hint?.severity).toBe("warning");
   });
 });
