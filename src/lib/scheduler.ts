@@ -1194,7 +1194,9 @@ function placeRigidShifts(state: SchedulerState): void {
   );
   const weightOf = (employee: Employee, d: string) =>
     (employee.workRole && state.paceWeight.get(employee.workRole)?.get(d)) ||
-    thienlongDateWeight(d, state.holidays.has(d));
+    (state.isVietpho
+      ? vietphoDemandWeight(weekdayKeyOf(parseIsoDate(d)), state.holidays.has(d))
+      : thienlongDateWeight(d, state.holidays.has(d)));
 
   const plans = new Map(
     rigid.map((e) => [

@@ -17,12 +17,6 @@ export type StoreConfig = {
 
 export const STORES: StoreConfig[] = [
   {
-    id: "thienlong",
-    name: "Thien Long Restaurant",
-    address: "Olgastraße 5, 89518 Heidenheim",
-    holidayState: "BW", // Heidenheim liegt in Baden-Württemberg
-  },
-  {
     id: "vietpho",
     name: "Viet Pho Restaurant",
     address: "Olgastraße 12, 89518 Heidenheim",

@@ -1,4 +1,6 @@
-# Dienstplan & Stundenzettel (MVP)
+# Viet Pho – Dienstplan & Stundenzettel
+
+> Tách từ `Tutty-Lab/thienlong-vietpho-restaurant` (commit fa04e35). Repo này chỉ phục vụ **Viet Pho Restaurant** (store_id `vietpho`).
 
 Web-App zur **automatischen Erstellung monatlicher Dienstpläne** und **druckbarer
 deutscher Stundenzettel** für ein Restaurant / Geschäft in Deutschland.
