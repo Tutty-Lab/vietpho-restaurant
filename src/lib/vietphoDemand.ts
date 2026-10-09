@@ -108,7 +108,7 @@ export function vietphoLateShiftRatio(weekday: WeekdayKey, isHoliday = false): n
 // Bếp/Bồi (Okt 2026): Viet Pho braucht in JEDER offenen Minute 1 Bếp + 1 Bồi.
 // Bồi-only (workRole SERVICE ohne „Làm được cả Bếp và Bồi") deckt nur Bồi.
 // Alle anderen sind FLEX: einer davon kocht, ein zweiter FLEX serviert.
-// Was niemand deckt, übernimmt einer der beiden Chefs („Chủ làm") – kein Fehler.
+// Ein Inhaber arbeitet jeden offenen Tag, bevorzugt im Service.
 // ---------------------------------------------------------------------------
 
 export type VietphoGroup = "FLEX" | "SERVICE";
@@ -135,6 +135,51 @@ export type VietphoGapSlot = {
   kitchen: boolean;
   service: boolean;
 };
+
+export type VietphoOwnerSegment = {
+  startMinutes: number;
+  endMinutes: number;
+  role: "KITCHEN" | "SERVICE";
+};
+
+/** One owner throughout opening hours; kitchen only when service is already covered. */
+export function vietphoOwnerSegments(
+  blocks: readonly { startMinutes: number; endMinutes: number }[],
+  presence: readonly VietphoPresence[],
+): VietphoOwnerSegment[] {
+  const result: VietphoOwnerSegment[] = [];
+  for (const block of blocks) {
+    const boundaries = [...new Set([
+      block.startMinutes, block.endMinutes,
+      ...presence.flatMap((p) => p.segments.flatMap((s) => [s.startMinutes, s.endMinutes]))
+        .filter((t) => t > block.startMinutes && t < block.endMinutes),
+    ])].sort((a, b) => a - b);
+    for (let i = 0; i < boundaries.length - 1; i++) {
+      const startMinutes = boundaries[i];
+      const endMinutes = boundaries[i + 1];
+      const active = presence.filter((p) => p.segments.some(
+        (s) => s.startMinutes <= startMinutes && s.endMinutes >= endMinutes,
+      ));
+      const role = !active.some((p) => p.group === "FLEX") && active.some((p) => p.group === "SERVICE")
+        ? "KITCHEN" : "SERVICE";
+      const last = result[result.length - 1];
+      if (last && last.endMinutes === startMinutes && last.role === role) last.endMinutes = endMinutes;
+      else result.push({ startMinutes, endMinutes, role });
+    }
+  }
+  return result;
+}
+
+export function vietphoPresenceWithOwner(
+  blocks: readonly { startMinutes: number; endMinutes: number }[],
+  presence: readonly VietphoPresence[],
+): VietphoPresence[] {
+  const owner = vietphoOwnerSegments(blocks, presence);
+  return [...presence, ...(["KITCHEN", "SERVICE"] as const).map((role) => ({
+    group: role === "KITCHEN" ? "FLEX" as const : "SERVICE" as const,
+    segments: owner.filter((s) => s.role === role),
+  }))];
+}
 
 /** Offene Zeitstücke (15 min), in denen Bếp und/oder Bồi fehlt. */
 export function vietphoGapSlots(

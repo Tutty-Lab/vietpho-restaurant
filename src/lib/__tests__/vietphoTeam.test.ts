@@ -15,7 +15,7 @@ const team: Employee[] = [
   { id: "loan", name: "Thuy Loan Pham Thi", employmentType: "TEILZEIT", targetMinutes: 20 * 60, workRole: "SERVICE", workDays: ["monday"] },
 ];
 
-describe("Viet Pho: 1 Bếp + 1 Bồi, Chủ làm fills the rest", () => {
+describe("Viet Pho: owner works every day, preferring service", () => {
   const year = 2026;
   const month = 10;
   const workHours = defaultWorkHoursForStore("vietpho");
@@ -53,11 +53,9 @@ describe("Viet Pho: 1 Bếp + 1 Bồi, Chủ làm fills the rest", () => {
     expect(kitchenGap / open).toBeLessThan(0.15);
   });
 
-  it("reports gaps as 'Chủ làm' hints, never as errors", () => {
+  it("reports remaining gaps after counting the owner", () => {
     const result = validateSchedule(team, shifts, { year, month, workHours, holidayState: "BW", storeId: "vietpho" });
     const coverage = result.errors.filter((e) => e.kind === "coverage");
-    expect(coverage.every((e) => e.severity === "warning" && e.message.includes("Chủ làm"))).toBe(true);
-    console.log(coverage.length, coverage.slice(0, 6).map((e) => e.message));
-    console.log(result.errors.filter((e) => e.kind !== "coverage").map((e) => e.message));
+    expect(coverage.every((e) => e.severity === "warning" && e.message.includes("Thiếu") && e.reason?.includes("Đã tính chủ"))).toBe(true);
   });
 });

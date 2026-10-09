@@ -1,3 +1,5 @@
+import { vietphoOwnerForDate } from "../lib/vietphoOwner";
+import { OwnerTimes } from "./OwnerTimes";
 import { useMemo, useRef, useEffect } from "react";
 import { RoleBadge } from "./RoleBadge";
 import { mealLabel } from "../lib/shiftMeals";
@@ -72,6 +74,8 @@ export function ScheduleDayView({
     (e) => !shiftByEmp.has(e.id) && isEmployeeAvailableOn(e, selectedDate),
   );
 
+  const owner = store.storeId === "vietpho"
+    ? vietphoOwnerForDate(schedule, selectedDate, store.monthEmployees) : [];
   const totalMin = shiftsOfDay.reduce((a, s) => a + s.paidMinutes, 0);
   const kitchenCount = working.filter((e) => e.workRole === "KITCHEN").length;
   const serviceCount = working.filter((e) => e.workRole === "SERVICE").length;
@@ -152,11 +156,17 @@ export function ScheduleDayView({
         <Summary label="Bếp / Bồi" value={`${kitchenCount} / ${serviceCount}`} />
       </div>
 
+      {owner.length > 0 && (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+          <div className="font-semibold">Chủ quán · Ưu tiên Bồi</div>
+          <OwnerTimes segments={owner} />
+        </div>
+      )}
       {/* Danh sách người làm */}
       <div className="mt-3 space-y-2">
         {working.length === 0 ? (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-center text-sm text-slate-400">
-            {schedule.shifts.length === 0 ? "Chưa tạo lịch." : "Không ai làm ngày này."}
+            {schedule.shifts.length === 0 ? "Chưa tạo lịch." : "Không có nhân viên làm ngày này."}
           </div>
         ) : (
           working.map((emp) => {

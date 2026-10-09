@@ -1,3 +1,5 @@
+import { vietphoOwnerForDate } from "../lib/vietphoOwner";
+import { OwnerTimes } from "./OwnerTimes";
 import { useEffect, useMemo, useState } from "react";
 import { RoleBadge } from "./RoleBadge";
 import { SavedSchedulesButton } from "./SavedSchedules";
@@ -166,6 +168,10 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
     return result;
   }, [isThienlong, dates, schedule, roleOf]);
 
+  const ownerByDate = useMemo(() => new Map(dates.map((date) => [date,
+    store.storeId === "vietpho" ? vietphoOwnerForDate(schedule, date, store.monthEmployees) : [],
+  ])), [dates, schedule, store.storeId, store.monthEmployees]);
+
   const hasEmployees = schedule.employees.length > 0;
 
   return (
@@ -236,6 +242,12 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
       {/* Lỗi: nhóm theo loại, có lý do + gợi ý; „Tìm cách xếp khác" thử đổi vị trí cả tháng. */}
       <ValidationPanel store={store} />
 
+      {store.storeId === "vietpho" && (
+        <p className="mb-3 text-sm text-emerald-800">
+          Chủ quán làm mọi ngày mở cửa, ưu tiên Bồi; phụ Bếp khi thiếu bếp và đã có người làm Bồi.
+          Các tổng nhân viên và giờ bên dưới chưa bao gồm chủ quán.
+        </p>
+      )}
       {/* Chú thích (chỉ ở bảng tháng) */}
       {view === "grid" && (
         <div className="flex flex-wrap gap-3 mb-2 text-xs text-slate-600">
@@ -254,7 +266,7 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
         </div>
       )}
 
-      {!hasEmployees ? (
+      {!hasEmployees && store.storeId !== "vietpho" ? (
         <div className="rounded bg-white border border-slate-200 p-6 text-center text-slate-400">
           Vui lòng thêm nhân viên trước.
         </div>
@@ -387,6 +399,19 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
                   </tr>
                 );
               })}
+              {store.storeId === "vietpho" && (
+                <tr className="bg-emerald-50 text-emerald-900">
+                  <td className="sticky left-0 z-10 bg-emerald-50 border-b border-r border-slate-200 px-2 py-2 font-medium">Chủ quán</td>
+                  <td colSpan={2} className="px-2 py-1 text-center">Ưu tiên Bồi</td>
+                  {dates.map((date) => (
+                    <td key={date} className="border-l border-slate-200 px-1 py-2 text-center">
+                      {ownerByDate.get(date)!.length > 0
+                        ? <OwnerTimes segments={ownerByDate.get(date)!} /> : "Đóng cửa"}
+                    </td>
+                  ))}
+                  <td colSpan={2} className="border-l border-slate-200 px-2 text-center">Mỗi ngày mở cửa</td>
+                </tr>
+              )}
             </tbody>
             <tfoot>
               <SummaryRow label="Số nhân viên" dates={dates} value={(d) => String(dayStats.get(d)!.count)} />

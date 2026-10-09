@@ -223,15 +223,17 @@ export function DocsTab({ storeId }: { storeId: string }) {
       )}
 
       {!isThienlong && (
-        <Section title="Vietpho: profile riêng, không tách Bếp / Bồi">
+        <Section title="Vietpho: Chủ quán làm mỗi ngày, ưu tiên Bồi">
           <p>
             Mốc tham chiếu của Vietpho là <b>{VIETPHO_REFERENCE_INVOICES} Rechnungen inkl. Steuer</b>.
-            Tiệm ít nhân viên và Umsatz thấp hơn Thienlong nên thuật toán không dùng tỷ lệ Bếp/Bồi.
+            Chủ quán làm toàn bộ giờ mở cửa mỗi ngày, ưu tiên Bồi. Nhân viên được ưu tiên lấp ca Bếp; chủ phụ Bếp khi thiếu bếp và đã có người làm Bồi.
           </p>
           <ul className="list-disc pl-5 space-y-1">
+            <li>Chủ nghỉ khi quán đóng cửa; giờ chủ không cộng vào định mức nhân viên.</li>
             <li>Nhân viên bắt đầu đúng giờ mở cửa, không đến sớm 30 phút.</li>
             <li>Ca ngắn hơn Thienlong khoảng 1–2 giờ, tối đa <b>8h/ca</b>.</li>
             <li>Luôn ưu tiên ít nhất <b>2 người lúc 12:30–13:00 và 18:00–20:00</b>.</li>
+            <li>Bồi được ưu tiên vào <b>12:00–14:00</b> và <b>18:00–20:00</b>; có thể xếp 2 ca trong một ngày.</li>
             <li>T6/T7 chỉ cao hơn ngày thường khoảng <b>20%</b>; Chủ Nhật nhỉnh hơn nhẹ.</li>
           </ul>
         </Section>

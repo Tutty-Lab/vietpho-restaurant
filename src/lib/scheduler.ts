@@ -492,7 +492,10 @@ function vietphoPresenceOf(state: SchedulerState, shifts: readonly Shift[]): Vie
 
 /** Gewichtete Bếp/Bồi-Lücke des Tages mit diesen Schichten. */
 function vietphoDayGapScore(state: SchedulerState, isoDate: string, shifts: readonly Shift[]): number {
-  return vietphoGapScore(vietphoGapSlots(state.dayOf(isoDate).blocks, vietphoPresenceOf(state, shifts)));
+  return vietphoGapScore(vietphoGapSlots(state.dayOf(isoDate).blocks, [
+    ...vietphoPresenceOf(state, shifts),
+    { group: "SERVICE", segments: state.dayOf(isoDate).blocks },
+  ]));
 }
 
 function customContinuousShift(
@@ -727,6 +730,20 @@ function vietphoCandidates(
   const split = customVietphoSplitShift(employee, isoDate, paidMinutes, blocks);
   if (split) candidates.push(split);
 
+  // Viet Pho service is strongest in the two customer peaks. When a Bồi
+  // shift fits, offer a split placement in both windows so one person may
+  // cover two ca in the same day (12:00–14:00 and 18:00–20:00).
+  if (employee.workRole === "SERVICE" && paidMinutes <= 4 * 60) {
+    const first = Math.min(2 * 60, Math.max(60, Math.floor(paidMinutes / 2 / 30) * 30));
+    const second = paidMinutes - first;
+    if (first >= 60 && second >= 60) {
+      const preferredSplit = customSplitShift(employee, isoDate, paidMinutes, 12 * 60, first, 18 * 60);
+      if (preferredSplit.segments?.every((s) =>
+        blocks.some((b) => b.startMinutes <= s.startMinutes && s.endMinutes <= b.endMinutes),
+      )) candidates.push(preferredSplit);
+    }
+  }
+
   const presence = presenceFromPaid(paidMinutes);
   const alignments = vietphoPeakIntervals().flatMap((peak) => [
     peak.startMinutes,
@@ -762,8 +779,16 @@ function makeVietphoDemandAwareShift(
   const scored = candidates.map((candidate) => ({
     candidate,
     gap: vietphoDayGapScore(state, isoDate, [...existing, candidate]),
+    // Keep coverage primary, then choose the owner's requested Bồi peaks.
+    preferred: employee.workRole === "SERVICE"
+      ? (candidate.segments ?? [candidate]).reduce((sum, s) =>
+        sum + Math.max(0, Math.min(s.endMinutes, 14 * 60) - Math.max(s.startMinutes, 12 * 60))
+        + Math.max(0, Math.min(s.endMinutes, 20 * 60) - Math.max(s.startMinutes, 18 * 60)), 0)
+      : 0,
   }));
-  return scored.reduce((best, item) => (item.gap < best.gap ? item : best)).candidate;
+  return scored.reduce((best, item) =>
+    item.gap < best.gap || (item.gap === best.gap && item.preferred > best.preferred) ? item : best,
+  ).candidate;
 }
 
 function replaceShiftPlacement(state: SchedulerState, shift: Shift, candidate: Shift): void {
@@ -838,7 +863,10 @@ function makeRoleAwareShift(
 function roleGapHours(state: SchedulerState, employee: Employee, isoDate: string): number {
   if (state.isVietpho) {
     const existing = vietphoShiftsOnDate(state, isoDate);
-    const gaps = vietphoGapSlots(state.dayOf(isoDate).blocks, vietphoPresenceOf(state, existing));
+    const gaps = vietphoGapSlots(state.dayOf(isoDate).blocks, [
+      ...vietphoPresenceOf(state, existing),
+      { group: "SERVICE", segments: state.dayOf(isoDate).blocks },
+    ]);
     return vietphoGapScoreFor(vietphoGroupOf(employee), gaps) / 60;
   }
   const demand = roleDemandOf(state, employee, isoDate);

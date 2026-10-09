@@ -91,7 +91,7 @@ describe("Vietpho scheduling profile", () => {
     expect(shifts.some((shift) => shift.paidMinutes <= 2 * 60)).toBe(true);
   });
 
-  it("covers both Vietpho peak windows with at least two employees every open day", () => {
+  it("covers both Vietpho peak windows with staff and the owner every open day", () => {
     const shifts = generateSchedule({
       year: 2026,
       month: 8,
@@ -111,7 +111,7 @@ describe("Vietpho scheduling profile", () => {
               segment.startMinutes <= peak.startMinutes && segment.endMinutes >= peak.endMinutes,
           );
         });
-        expect(covering.length, `${date} ${peak.startMinutes}-${peak.endMinutes}`).toBeGreaterThanOrEqual(
+        expect(covering.length + 1, `${date} ${peak.startMinutes}-${peak.endMinutes}`).toBeGreaterThanOrEqual(
           peak.minStaff,
         );
       }
@@ -167,7 +167,7 @@ describe("Vietpho scheduling profile", () => {
     ).toEqual([]);
   });
 
-  it("reports missing Bếp/Bồi as 'Chủ làm' hints instead of the Thienlong pre-opening rule", () => {
+  it("reports remaining gaps after counting the owner", () => {
     const workHours = defaultWorkHoursForStore("vietpho");
     const shifts = generateSchedule({
       year: 2026,
@@ -191,21 +191,12 @@ describe("Vietpho scheduling profile", () => {
     ).toEqual([]);
 
     const date = "2026-08-03";
-    const dinner = vietphoPeakIntervals()[1];
-    const dinnerShifts = shifts.filter(
-      (shift) =>
-        shift.date === date &&
-        (shift.segments ?? [shift]).some(
-          (segment) =>
-            segment.startMinutes <= dinner.startMinutes && segment.endMinutes >= dinner.endMinutes,
-        ),
-    );
     const invalid = shifts.filter(
-      (shift) => shift.date !== date || shift.id === dinnerShifts[0]?.id,
+      (shift) => shift.date !== date,
     );
     const errors = validateSchedule(employees, invalid, context).errors;
 
-    const hint = errors.find((error) => error.date === date && error.message.includes("Chủ làm"));
+    const hint = errors.find((error) => error.date === date && error.message.includes("Thiếu Bếp"));
     expect(hint?.severity).toBe("warning");
   });
 });

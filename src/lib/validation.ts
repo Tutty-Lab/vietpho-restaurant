@@ -14,7 +14,7 @@ import { maxConsecutiveRun } from "./consecutive";
 import { datesOfMonth, parseIsoDate, weekdayKeyOf } from "./demand";
 import { holidaysOf, type HolidayState } from "./holidays";
 import { resolveDay, type OverrideMap, type WorkHoursConfig } from "./workHours";
-import { vietphoGapRanges, vietphoGapSlots, vietphoGroupOf } from "./vietphoDemand";
+import { vietphoGapRanges, vietphoGapSlots, vietphoGroupOf, vietphoPresenceWithOwner } from "./vietphoDemand";
 import { isEmployeeFixedDayOff } from "./fixedDaysOff";
 import { unavailableReason } from "./availability";
 import { azubiMonthCapacityBreakdown, type AzubiWeekCapacity } from "./scheduler";
@@ -285,15 +285,15 @@ export function validateSchedule(
       if (day.closed) continue;
 
       if (context.storeId === "vietpho") {
-        // 1 Bếp + 1 Bồi immer; Lücken übernimmt ein Chef – Hinweis, kein Fehler.
+        // Count one owner, preferring service, without covering two roles at once.
         const gaps = vietphoGapSlots(
           day.blocks,
-          shifts
+          vietphoPresenceWithOwner(day.blocks, shifts
             .filter((shift) => shift.date === date)
             .map((shift) => ({
               group: vietphoGroupOf(employees.find((e) => e.id === shift.employeeId) ?? {}),
               segments: shift.segments ?? [shift],
-            })),
+            }))),
         );
         for (const role of ["kitchen", "service"] as const) {
           const ranges = vietphoGapRanges(gaps, role);
@@ -303,12 +303,12 @@ export function validateSchedule(
             kind: "coverage",
             severity: "warning",
             message:
-              `Ngày ${date}: Chủ làm ${role === "kitchen" ? "Bếp" : "Bồi"} ` +
+              `Ngày ${date}: Thiếu ${role === "kitchen" ? "Bếp" : "Bồi"} ` +
               ranges
                 .map((r) => `${minutesToTime(r.startMinutes)}–${minutesToTime(r.endMinutes)}`)
                 .join(", ") +
               ".",
-            reason: "Nhân viên không đủ giờ để luôn có 1 Bếp + 1 Bồi.",
+            reason: "Đã tính chủ làm cả ngày, ưu tiên Bồi. Một người không thể cùng lúc làm cả Bếp và Bồi.",
           });
         }
         continue;
