@@ -55,8 +55,28 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,woff2}"],
-        navigateFallback: "index.html",
+        // index.html NICHT vorab cachen und nicht als navigateFallback ausliefern:
+        // sonst startet die App vom Home-Bildschirm (iPhone) immer mit der ALTEN
+        // Seite aus dem Cache, und ein Deploy kam erst nach Löschen/Neu-Anheften an.
+        // Stattdessen holt jede Navigation die Seite zuerst vom Netz (NetworkFirst),
+        // offline gilt die zuletzt geladene Kopie.
+        globPatterns: ["**/*.{js,css,svg,woff2}"],
+        navigateFallback: null,
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === "navigate",
+            handler: "NetworkFirst",
+            options: { cacheName: "pages", networkTimeoutSeconds: 4 },
+          },
+        ],
+        // Neue Version SOFORT übernehmen statt erst, wenn alle Tabs zu sind.
+        // Sonst servierte der Service-Worker nach einem Deploy weiter die ALTE
+        // App aus dem Cache – Korrekturen (PDF-Tabelle, Druck-Fußzeile …) kamen
+        // beim Nutzer erst Tage später an. Mit skipWaiting/clientsClaim aktiviert
+        // sich die neue Version beim nächsten Laden und lädt einmal frisch nach.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
       },
       devOptions: {
         enabled: false,

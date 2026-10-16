@@ -1,17 +1,6 @@
 import type { UseScheduleReturn } from "../hooks/useSchedule";
 import { minutesToDecimalHours } from "../lib/time";
 
-function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
-  return (
-    <div className="rounded-lg bg-white border border-slate-200 px-2.5 py-1.5 sm:px-3 sm:py-2 shadow-sm">
-      <div className="text-[11px] sm:text-xs text-slate-500 leading-tight">{label}</div>
-      <div className={`text-base sm:text-lg font-semibold leading-tight ${accent ?? "text-slate-900"}`}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 export function Dashboard({ store }: { store: UseScheduleReturn }) {
   const { schedule, validation, readiness } = store;
   const vz = schedule.employees.filter((e) => e.employmentType === "VOLLZEIT").length;
@@ -40,32 +29,37 @@ export function Dashboard({ store }: { store: UseScheduleReturn }) {
       ? "text-emerald-600"
       : "text-rose-600";
 
+  const pct = targetMin > 0 ? Math.min(100, Math.round((plannedMin / targetMin) * 100)) : 0;
+  const statusPill =
+    statusAccent === "text-emerald-600"
+      ? "bg-emerald-50 text-emerald-700"
+      : statusAccent === "text-rose-600"
+        ? "bg-rose-50 text-rose-700"
+        : "bg-amber-50 text-amber-700";
+
   return (
     <div>
-      {/* Kurzfassung immer sichtbar; Einzelzahlen nur aufgeklappt. */}
-      <details className="group rounded-lg bg-white border border-slate-200 shadow-sm">
-        <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
-          <span className={`font-semibold ${statusAccent}`}>{statusValue}</span>
-          <span className="text-slate-600">
-            {schedule.employees.length} nhân viên · định mức {minutesToDecimalHours(targetMin)} h · đã xếp{" "}
-            {minutesToDecimalHours(plannedMin)} h
+      {/* Eine Karte statt der Zahlenkacheln (wie die Demo): Stunden als Balken. */}
+      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm text-slate-500">
+            Giờ đã xếp · {schedule.employees.length} người ({vz} TT · {tz} BT · {az} Azubi)
           </span>
-          <span className="ml-auto text-xs text-slate-400 group-open:hidden">Chi tiết ▾</span>
-          <span className="ml-auto hidden text-xs text-slate-400 group-open:inline">Thu gọn ▴</span>
-        </summary>
-        <div className="grid grid-cols-2 md:grid-cols-7 gap-2 border-t border-slate-100 p-2">
-          <Stat label="Số nhân viên" value={String(schedule.employees.length)} />
-          <Stat label="Toàn thời gian" value={String(vz)} />
-          <Stat label="Bán thời gian" value={String(tz)} />
-          <Stat label="Azubi" value={String(az)} />
-          <Stat label="Tổng giờ định mức" value={`${minutesToDecimalHours(targetMin)} h`} />
-          <Stat label="Tổng giờ đã xếp" value={`${minutesToDecimalHours(plannedMin)} h`} />
-          <Stat label="Trạng thái kiểm tra" value={statusValue} accent={statusAccent} />
+          <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusPill}`}>{statusValue}</span>
         </div>
-      </details>
+        <div className="mt-1 flex items-baseline gap-1.5">
+          <span className="text-2xl font-semibold text-slate-900">{minutesToDecimalHours(plannedMin)}</span>
+          <span className="text-sm text-slate-500">/ {minutesToDecimalHours(targetMin)} h định mức</span>
+          <span className="ml-auto text-sm font-semibold text-slate-500">{pct}%</span>
+        </div>
+        <div className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-slate-100">
+          <div className="bg-slate-700" style={{ width: `${pct}%` }} />
+          {plannedMin > 0 && pct < 100 && <div className="bg-amber-300" style={{ width: `${100 - pct}%` }} />}
+        </div>
+      </div>
       {notGenerated && readiness.ready && (
         <div className="mt-2 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-3 py-2">
-          Cấu hình đã đầy đủ. Bấm “+ Tạo lịch làm việc” để tạo lịch.
+          Cấu hình đã đầy đủ — bấm Tạo lịch.
         </div>
       )}
       {notGenerated && !readiness.ready && (

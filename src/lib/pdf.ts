@@ -460,8 +460,9 @@ export async function buildStundenzettelPdf(
  */
 export function deliver(blob: Blob, filename: string): void {
   if (typeof document === "undefined") return;
-  const octet = new Blob([blob], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(octet);
+  // application/pdf statt octet-stream: Messenger/Zalo-WebView zeigt sonst Zeichensalat.
+  const pdf = blob.type === "application/pdf" ? blob : new Blob([blob], { type: "application/pdf" });
+  const url = URL.createObjectURL(pdf);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
