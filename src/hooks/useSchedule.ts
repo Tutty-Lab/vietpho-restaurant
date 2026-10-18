@@ -31,6 +31,7 @@ import { isEmployeeFixedDayOff, normalizedFixedDaysOff } from "../lib/fixedDaysO
 import { withEmploymentPeriodTarget } from "../lib/employmentPeriod";
 import { isEmployeeAvailableOn } from "../lib/availability";
 import { withMonthRoles } from "../lib/roleCoverage";
+import { vietphoRosterEmployees } from "../lib/vietphoRoster";
 import { applyRoleChanges, type RoleChange } from "../lib/suggestions";
 import { listSavedMonths, mergeArchives, monthKey, switchMonth } from "../lib/monthArchive";
 
@@ -96,7 +97,7 @@ function normalizeSchedule(raw: Schedule | undefined, store: StoreConfig): Sched
         : defaultWorkHoursForStore(store.id),
     surchargeConfig: normalizeSurchargeConfig(raw.surchargeConfig),
     dateOverrides: Array.isArray(raw.dateOverrides) ? raw.dateOverrides : [],
-    employees: (raw.employees ?? []).map((employee) =>
+    employees: (store.id === "vietpho" ? vietphoRosterEmployees(raw.employees ?? []) : raw.employees ?? []).map((employee) =>
       normalizeEmployee(employee, year, month),
     ),
     shifts: raw.shifts ?? [],

@@ -15,6 +15,7 @@ import { datesOfMonth, parseIsoDate, weekdayKeyOf } from "./demand";
 import { holidaysOf, type HolidayState } from "./holidays";
 import { resolveDay, type OverrideMap, type WorkHoursConfig } from "./workHours";
 import { vietphoGapRanges, vietphoGapSlots, vietphoGroupOf, vietphoPresenceWithOwner } from "./vietphoDemand";
+import { vietphoRosterEmployees } from "./vietphoRoster";
 import { isEmployeeFixedDayOff } from "./fixedDaysOff";
 import { unavailableReason } from "./availability";
 import { azubiMonthCapacityBreakdown, type AzubiWeekCapacity } from "./scheduler";
@@ -75,6 +76,7 @@ export function validateSchedule(
   shifts: Shift[],
   context?: ValidationContext,
 ): ValidationResult {
+  if (context?.storeId === "vietpho") employees = vietphoRosterEmployees(employees);
   const errors: ValidationError[] = [];
   const shiftsByEmployee = new Map<string, Shift[]>();
   for (const emp of employees) shiftsByEmployee.set(emp.id, []);
@@ -244,7 +246,7 @@ export function validateSchedule(
         severity: "warning",
         message: capped
           ? `${emp.name}: xếp ${assignedMinutes / 60}h / ${emp.targetMinutes / 60}h – tháng này tối đa ${capacity! / 60}h.`
-          : `${emp.name}: chưa đạt giờ định mức: ${assignedMinutes / 60} h thay vì ${emp.targetMinutes / 60} h.`,
+          : `${emp.name}: ${assignedMinutes > emp.targetMinutes ? "vượt" : "chưa đạt"} giờ định mức: ${assignedMinutes / 60} h thay vì ${emp.targetMinutes / 60} h.`,
         kind: "hours",
         reason: capped
           ? azubiCapacityReason(breakdown!, emp.targetMinutes)

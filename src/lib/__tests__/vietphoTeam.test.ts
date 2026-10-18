@@ -22,17 +22,17 @@ describe("Viet Pho: owner works every day, preferring service", () => {
   const holidays = holidaysOf(year, "BW");
   const shifts = generateSchedule({ year, month, storeId: "vietpho", workHours, holidays, employees: team, seed: "vp-team" });
 
-  it("meets every monthly target exactly", () => {
-    for (const e of team) {
-      const sum = shifts.filter((s) => s.employeeId === e.id).reduce((a, s) => a + s.paidMinutes, 0);
-      expect(sum, e.name).toBe(e.targetMinutes);
-    }
+  it("prioritizes fixed service coverage and warns about excess monthly hours", () => {
+    const sum = shifts.filter((s) => s.employeeId === "hen").reduce((a, s) => a + s.paidMinutes, 0);
+    expect(sum).toBe(108 * 60);
+    const result = validateSchedule(team, shifts, { year, month, workHours, holidayState: "BW", storeId: "vietpho" });
+    expect(result.errors.some((e) => e.employeeId === "hen" && e.kind === "hours" && e.severity === "warning")).toBe(true);
   });
 
-  it("schedules Thuy Loan only on Mondays", () => {
+  it("schedules Thuy Loan only on Sundays, replacing the old Monday setting", () => {
     const days = shifts.filter((s) => s.employeeId === "loan").map((s) => weekdayKeyOf(parseIsoDate(s.date)));
     expect(days.length).toBeGreaterThan(0);
-    expect(new Set(days)).toEqual(new Set(["monday"]));
+    expect(new Set(days)).toEqual(new Set(["sunday"]));
   });
 
   it("keeps the kitchen staffed by Dinh/Nga almost all the time", () => {

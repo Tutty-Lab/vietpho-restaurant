@@ -25,6 +25,7 @@ import {
   type WorkRole,
 } from "../types";
 import { isEmployeeFixedDayOff } from "./fixedDaysOff";
+import { applyVietphoRoster, vietphoRosterEmployees } from "./vietphoRoster";
 import { isEmployeeAvailableOn } from "./availability";
 import { TEILZEIT_SHIFT_HOURS, teilzeitShiftCount } from "./splitTargetHours";
 import {
@@ -3292,6 +3293,7 @@ export function azubiMonthCapacityMinutes(
  * Gibt eine neue Liste generierter Shifts zurück (verändert keine Eingaben).
  */
 export function generateSchedule(input: GenerateInput): Shift[] {
+  if (input.storeId === "vietpho") input = { ...input, employees: vietphoRosterEmployees(input.employees) };
   shiftIdCounter = 0;
   const { year, month, workHours, employees } = input;
   const holidays = input.holidays ?? holidaysOf(year, input.holidayState ?? "BW");
@@ -3555,5 +3557,5 @@ export function generateSchedule(input: GenerateInput): Shift[] {
       a.startMinutes - b.startMinutes ||
       a.employeeId.localeCompare(b.employeeId),
   );
-  return state.shifts;
+  return isVietpho ? applyVietphoRoster(input, state.shifts) : state.shifts;
 }
