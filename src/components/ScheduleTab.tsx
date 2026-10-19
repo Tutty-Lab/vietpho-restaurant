@@ -94,6 +94,11 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
     () => new Map(store.monthEmployees.map((e) => [e.id, e.workRole] as const)),
     [store.monthEmployees],
   );
+  // Bếp zuerst, dann Bồi, dann ohne Rolle – Reihenfolge innerhalb bleibt.
+  const sortedEmployees = useMemo(() => {
+    const rank = (id: string) => { const r = roleOf.get(id); return r === "KITCHEN" ? 0 : r === "SERVICE" ? 1 : 2; };
+    return [...schedule.employees].sort((a, b) => rank(a.id) - rank(b.id));
+  }, [schedule.employees, roleOf]);
   const dayStats = useMemo(() => {
     type DayStat = {
       count: number;
@@ -135,9 +140,13 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
   // Thienlong: Bếp/Bồi ít nhất có mặt trong từng khung giờ (lúc vắng nhất của
   // khung), để thấy ngay chỗ chỉ còn 1–2 người. `need` = mức tối thiểu theo luật.
   const isThienlong = store.storeId === "thienlong";
+  // Viet Pho: gleiche Zeilen, der Chủ zählt mit (Bồi, bei Bedarf Bếp);
+  // Bếp und Bồi brauchen je mindestens 1 – Chủ eingerechnet.
+  const isVietpho = store.storeId === "vietpho";
+  const showCoverage = isThienlong || isVietpho;
   const coverage = useMemo(() => {
     const result = new Map<string, Map<string, Coverage | null>>();
-    if (!isThienlong) return result;
+    if (!showCoverage) return result;
     const holidays = holidaysOf(schedule.year, schedule.holidayState);
     const overrideMap = Object.fromEntries(schedule.dateOverrides.map((o) => [o.date, o]));
     for (const d of dates) {
@@ -146,18 +155,26 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
       const day = resolveDay(schedule.workHours, d, holidays, overrideMap);
       const dayShifts = schedule.shifts.filter((s) => s.date === d);
       const weekday = weekdayKeyOf(parseIsoDate(d));
+      const owner = isVietpho ? vietphoOwnerForDate(schedule, d, store.monthEmployees) : [];
       for (const w of COVERAGE_WINDOWS) {
         const from = w.from ?? day.blocks[0]?.startMinutes ?? 0;
         let cell: Coverage | null = null;
         for (const block of day.closed ? [] : day.blocks) {
-          for (let t = Math.max(from, block.startMinutes); t + 30 <= Math.min(w.to, block.endMinutes); t += 30) {
-            const count = roleShiftsAt(dayShifts, roleOf, w.role, t);
-            const need = thienlongMinStaffWindows(weekday, w.role).reduce(
-              (max, m) => (t >= m.startMinutes && t + 30 <= m.endMinutes ? Math.max(max, m.minStaff) : max),
-              0,
+          // Viet Pho tauscht oft zur Viertelstunde – darum 15-min-Raster statt 30.
+          const step = isVietpho ? 15 : 30;
+          for (let t = Math.max(from, block.startMinutes); t + step <= Math.min(w.to, block.endMinutes); t += step) {
+            const staff = roleShiftsAt(dayShifts, roleOf, w.role, t, step);
+            const withOwner = owner.some(
+              (o) => o.role === w.role && o.startMinutes <= t && o.endMinutes >= t + step,
             );
-            if (!cell) cell = { min: count, short: false, need: 0 };
-            cell.min = Math.min(cell.min, count);
+            const count = staff + (withOwner ? 1 : 0);
+            const need = isVietpho
+              ? 1
+              : thienlongMinStaffWindows(weekday, w.role).reduce(
+                  (max, m) => (t >= m.startMinutes && t + step <= m.endMinutes ? Math.max(max, m.minStaff) : max),
+                  0,
+                );
+            if (!cell || count < cell.min) cell = { ...(cell ?? { short: false, need: 0 }), min: count, owner: withOwner };
             if (count < need) cell.short = true;
             cell.need = Math.max(cell.need, need);
           }
@@ -166,7 +183,7 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
       }
     }
     return result;
-  }, [isThienlong, dates, schedule, roleOf]);
+  }, [showCoverage, isVietpho, dates, schedule, roleOf, store.monthEmployees]);
 
   const ownerByDate = useMemo(() => new Map(dates.map((date) => [date,
     store.storeId === "vietpho" ? vietphoOwnerForDate(schedule, date, store.monthEmployees) : [],
@@ -326,7 +343,7 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
               </tr>
             </thead>
             <tbody>
-              {schedule.employees.map((emp) => {
+              {sortedEmployees.map((emp) => {
                 const sum = summaryByEmp.get(emp.id);
                 const diff = sum?.diffMinutes ?? -emp.targetMinutes;
                 return (
@@ -421,14 +438,15 @@ export function ScheduleTab({ store }: { store: UseScheduleReturn }) {
                 value={(d) => minutesToShortHours(dayStats.get(d)!.total)}
               />
               <SummaryRow label="Bếp trưa" dates={dates} value={(d) => String(dayStats.get(d)!.kitchenLunch)} />
-              <SummaryRow label="Bồi trưa" dates={dates} value={(d) => String(dayStats.get(d)!.serviceLunch)} />
               <SummaryRow label="Bếp tối" dates={dates} value={(d) => String(dayStats.get(d)!.kitchenDinner)} />
+              <SummaryRow label="Bồi trưa" dates={dates} value={(d) => String(dayStats.get(d)!.serviceLunch)} />
               <SummaryRow label="Bồi tối" dates={dates} value={(d) => String(dayStats.get(d)!.serviceDinner)} />
-              {isThienlong &&
+              {showCoverage &&
                 COVERAGE_WINDOWS.map((w) => (
                   <CoverageRow
                     key={w.key}
-                    label={w.label}
+                    label={isVietpho && w.role === "SERVICE" ? w.label.replace("Bồi", "Bồi (chủ)") : w.label}
+                    small={isVietpho}
                     dates={dates}
                     cell={(d) => coverage.get(d)?.get(w.key) ?? null}
                   />
@@ -477,25 +495,20 @@ function SummaryRow({
   );
 }
 
-type Coverage = { min: number; short: boolean; need: number };
+/** min = ít người nhất trong khung (tính cả chủ nếu owner = true lúc đó). */
+type Coverage = { min: number; short: boolean; need: number; owner?: boolean };
 
 // Khung giờ cho các dòng „ít nhất" ở chân bảng (from undefined = giờ mở cửa).
-const COVERAGE_WINDOWS: {
-  key: string;
-  label: string;
-  role: "KITCHEN" | "SERVICE";
-  from?: number;
-  to: number;
-}[] = (
-  [
-    ["open", "mở cửa–12h", undefined, 12 * 60],
-    ["noon", "12–14h", 12 * 60, 14 * 60],
-    ["afternoon", "14–17h", 14 * 60, 17 * 60],
-    ["evening", "17–20h", 17 * 60, 20 * 60],
-    ["late", "20–22h", 20 * 60, 22 * 60],
-  ] as const
-).flatMap(([key, range, from, to]) =>
-  (["KITCHEN", "SERVICE"] as const).map((role) => ({
+const COVERAGE_RANGES = [
+  ["open", "mở cửa–12h", undefined, 12 * 60],
+  ["noon", "12–14h", 12 * 60, 14 * 60],
+  ["afternoon", "14–17h", 14 * 60, 17 * 60],
+  ["evening", "17–20h", 17 * 60, 20 * 60],
+  ["late", "20–22h", 20 * 60, 22 * 60],
+] as const;
+// Erst alle Bếp-Zeilen, dann alle Bồi-Zeilen – leichter zu lesen.
+const COVERAGE_WINDOWS = (["KITCHEN", "SERVICE"] as const).flatMap((role) =>
+  COVERAGE_RANGES.map(([key, range, from, to]) => ({
     key: `${role}-${key}`,
     label: `${role === "KITCHEN" ? "Bếp" : "Bồi"} ${range}`,
     role,
@@ -509,21 +522,25 @@ function roleShiftsAt(
   roleOf: Map<string, string | undefined>,
   role: "KITCHEN" | "SERVICE",
   t: number,
+  step = 30,
 ): number {
   return shifts.filter(
     (s) =>
       roleOf.get(s.employeeId) === role &&
-      (s.segments ?? [s]).some((g) => g.startMinutes <= t && g.endMinutes >= t + 30),
+      (s.segments ?? [s]).some((g) => g.startMinutes <= t && g.endMinutes >= t + step),
   ).length;
 }
 
 /** Dòng „ít nhất x người" trong khung giờ: 1 = đỏ, 2 = vàng, thiếu luật = viền đỏ. */
 function CoverageRow({
   label,
+  small = false,
   dates,
   cell,
 }: {
   label: string;
+  /** Kleines Team (Viet Pho): 0 = rot, 1 = gelb. */
+  small?: boolean;
   dates: string[];
   cell: (d: string) => Coverage | null;
 }) {
@@ -538,9 +555,9 @@ function CoverageRow({
         const c = cell(d);
         const tone = !c
           ? "text-slate-300"
-          : c.min <= 1
+          : c.min <= (small ? 0 : 1)
             ? "bg-rose-50 text-rose-700 font-semibold"
-            : c.min === 2
+            : c.min === (small ? 1 : 2)
               ? "bg-amber-50 text-amber-800"
               : "";
         return (
@@ -551,7 +568,7 @@ function CoverageRow({
             }`}
             title={c?.short ? `Thiếu: cần ít nhất ${c.need}` : undefined}
           >
-            {c ? c.min : "–"}
+            {!c ? "–" : c.owner ? (c.min > 1 ? `${c.min - 1} + chủ` : "chủ") : c.min}
             {c?.short && <span className="block text-[10px] leading-none">cần {c.need}</span>}
           </td>
         );

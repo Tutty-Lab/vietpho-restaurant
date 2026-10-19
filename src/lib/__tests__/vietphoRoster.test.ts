@@ -21,7 +21,10 @@ describe("Vietpho fixed roster", () => {
       expect(relief).toHaveLength(sundays);
       expect(relief.every((s) => s.paidMinutes === daily && parseIsoDate(s.date).getDay() === 0)).toBe(true);
       expect(relief.reduce((sum, s) => sum + s.paidMinutes, 0)).toBe(1200);
-      expect(shifts.filter((s) => s.employeeId === "regular").every((s) => s.paidMinutes === 240 && parseIsoDate(s.date).getDay() !== 0)).toBe(true);
+      const regular = shifts.filter((s) => s.employeeId === "regular");
+      expect(regular.every((s) => parseIsoDate(s.date).getDay() !== 0)).toBe(true);
+      expect(regular).toHaveLength(datesOfMonth(2026, month).filter((d) => parseIsoDate(d).getDay() !== 0).length);
+      expect(regular.reduce((sum, s) => sum + s.paidMinutes, 0)).toBe(80 * 60);
       for (const date of datesOfMonth(2026, month)) {
         const day = resolveDay(workHours, date, input.holidays);
         for (const block of day.blocks) for (let t = block.startMinutes; t < block.endMinutes; t += 15) {
@@ -30,7 +33,7 @@ describe("Vietpho fixed roster", () => {
         }
       }
       const validation = validateSchedule(employees, shifts);
-      expect(validation.errors.some((e) => e.employeeId === "regular" && e.kind === "hours" && e.severity === "warning")).toBe(true);
+      expect(validation.errors.some((e) => e.employeeId === "regular" && e.kind === "hours")).toBe(false);
       expect(validation.errors.filter((e) => e.kind === "shift" && e.severity !== "warning")).toEqual([]);
     });
   }

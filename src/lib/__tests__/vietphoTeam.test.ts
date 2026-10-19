@@ -22,11 +22,20 @@ describe("Viet Pho: owner works every day, preferring service", () => {
   const holidays = holidaysOf(year, "BW");
   const shifts = generateSchedule({ year, month, storeId: "vietpho", workHours, holidays, employees: team, seed: "vp-team" });
 
-  it("prioritizes fixed service coverage and warns about excess monthly hours", () => {
-    const sum = shifts.filter((s) => s.employeeId === "hen").reduce((a, s) => a + s.paidMinutes, 0);
-    expect(sum).toBe(108 * 60);
+  it("keeps Hen on every Mon–Sat but shortens the pieces to land on 80 h", () => {
+    const hen = shifts.filter((s) => s.employeeId === "hen");
+    expect(hen.reduce((a, s) => a + s.paidMinutes, 0)).toBe(80 * 60);
+    expect(hen.every((s) => weekdayKeyOf(parseIsoDate(s.date)) !== "sunday")).toBe(true);
+    expect(hen.every((s) => s.segments?.[0].startMinutes === 12 * 60 && s.segments?.[1].startMinutes === 18 * 60)).toBe(true);
     const result = validateSchedule(team, shifts, { year, month, workHours, holidayState: "BW", storeId: "vietpho" });
-    expect(result.errors.some((e) => e.employeeId === "hen" && e.kind === "hours" && e.severity === "warning")).toBe(true);
+    expect(result.errors.some((e) => e.employeeId === "hen" && e.kind === "hours")).toBe(false);
+  });
+
+  it("splits the kitchen by monthly target, never above it", () => {
+    const paid = (id: string) => shifts.filter((s) => s.employeeId === id).reduce((a, s) => a + s.paidMinutes, 0);
+    expect(paid("nga")).toBe(140 * 60);
+    expect(paid("dinh")).toBeLessThanOrEqual(168 * 60);
+    expect(paid("dinh")).toBeGreaterThanOrEqual(164 * 60);
   });
 
   it("schedules Thuy Loan only on Sundays, replacing the old Monday setting", () => {

@@ -44,7 +44,15 @@ export function applyVietphoRoster(input: GenerateInput, original: Shift[]): Shi
       startMinutes, endMinutes, paidMinutes, pauseMinutes,
       ...(split ? { segments } : {}), shiftType: "CUSTOM", generated: true });
   };
+  const paired: { date: string; blocks: ShiftSegment[] }[] = [];
   const sundays = dates.filter((date) => parseIsoDate(date).getDay() === 0).length;
+  // Bồi 80h works every Mon–Sat; each day's two pieces (from 12:00 and 18:00)
+  // shrink so the month lands on the target (≈ 12:00–13:30 + 18:00–19:30).
+  const openDays = (e: Employee) => dates.filter((date) => {
+    const day = resolveDay(input.workHours, date, holidays, input.overrides ?? {});
+    return !day.closed && day.blocks.length > 0 && parseIsoDate(date).getDay() !== 0 && available(e, date);
+  }).length;
+  const regularLeft = new Map(regular.map((e) => [e.id, { minutes: e.targetMinutes, days: openDays(e) }]));
   for (const date of dates) {
     const day = resolveDay(input.workHours, date, holidays, input.overrides ?? {});
     if (day.closed || !day.blocks.length) continue;
@@ -52,11 +60,24 @@ export function applyVietphoRoster(input: GenerateInput, original: Shift[]): Shi
     const sunday = weekday === "sunday";
     for (const e of sunday ? relief : regular) {
       if (!available(e, date)) continue;
-      const extra = sunday && sundays === 4 ? 30 : 0;
-      const windows = [{ startMinutes: 720, endMinutes: 840 + extra }, { startMinutes: 1080, endMinutes: 1200 + extra }];
-      add(e, date, windows.flatMap((w) => day.blocks.map((b) => ({
+      const left = regularLeft.get(e.id);
+      let lunch = 120;
+      let dinner = 120;
+      if (sunday && sundays === 4) { lunch = 150; dinner = 150; }
+      if (left) {
+        const today = Math.min(240, Math.round(left.minutes / Math.max(1, left.days) / 15) * 15);
+        lunch = Math.floor(today / 2 / 15) * 15;
+        dinner = today - lunch;
+      }
+      const windows = [{ startMinutes: 720, endMinutes: 720 + lunch }, { startMinutes: 1080, endMinutes: 1080 + dinner }];
+      const segments = windows.flatMap((w) => day.blocks.map((b) => ({
         startMinutes: Math.max(w.startMinutes, b.startMinutes), endMinutes: Math.min(w.endMinutes, b.endMinutes),
-      })).filter((s) => s.endMinutes > s.startMinutes)));
+      })).filter((s) => s.endMinutes > s.startMinutes));
+      add(e, date, segments);
+      if (left) {
+        left.minutes -= segments.reduce((sum, g) => sum + g.endMinutes - g.startMinutes, 0);
+        left.days -= 1;
+      }
     }
     if (kitchen.length !== 2) continue;
     // Preserve configured rest days; otherwise stagger one weekly rest day per cook.
@@ -64,21 +85,49 @@ export function applyVietphoRoster(input: GenerateInput, original: Shift[]): Shi
       (e.fixedDaysOff?.length || parseIsoDate(date).getDay() !== i + 1));
     if (!active.length) continue;
     if (active.length === 1) { add(active[0], date, day.blocks.map((b) => ({ ...b }))); continue; }
-    const week = Math.floor((parseIsoDate(date).getDate() - 1) / 7);
-    const early = active[week % 2];
-    const late = active[(week + 1) % 2];
-    const total = day.blocks.reduce((sum, b) => sum + b.endMinutes - b.startMinutes, 0);
-    let remaining = Math.ceil(total / 2 / 15) * 15;
-    const earlySegments: ShiftSegment[] = [];
-    const lateSegments: ShiftSegment[] = [];
-    for (const b of day.blocks) {
-      const cut = Math.min(b.endMinutes, b.startMinutes + remaining);
-      if (cut > b.startMinutes) earlySegments.push({ startMinutes: b.startMinutes, endMinutes: cut });
-      if (cut < b.endMinutes) lateSegments.push({ startMinutes: cut, endMinutes: b.endMinutes });
-      remaining -= cut - b.startMinutes;
+    paired.push({ date, blocks: day.blocks });
+  }
+  // Two-cook days: split each day by the hours each cook still needs, not 50/50.
+  if (kitchen.length === 2) {
+    const paidOf = (e: Employee) => result.filter((s) => s.employeeId === e.id).reduce((sum, s) => sum + s.paidMinutes, 0);
+    let need = kitchen[0].targetMinutes - paidOf(kitchen[0]);
+    let left = paired.reduce((sum, d) => sum + d.blocks.reduce((t, b) => t + b.endMinutes - b.startMinutes, 0), 0);
+    for (const { date, blocks } of paired) {
+      const total = blocks.reduce((sum, b) => sum + b.endMinutes - b.startMinutes, 0);
+      const share = left > 0 ? Math.round(Math.max(0, need) * total / left / 15) * 15 : total / 2;
+      const target = Math.min(total, Math.max(60, Math.min(total - 60, share)));
+      const week = Math.floor((parseIsoDate(date).getDate() - 1) / 7);
+      const early = kitchen[week % 2];
+      const late = kitchen[(week + 1) % 2];
+      const cutAt = (first: number) => {
+        let remaining = early === kitchen[0] ? first : total - first;
+        const earlySegments: ShiftSegment[] = [];
+        const lateSegments: ShiftSegment[] = [];
+        for (const b of blocks) {
+          const cut = Math.min(b.endMinutes, b.startMinutes + remaining);
+          if (cut > b.startMinutes) earlySegments.push({ startMinutes: b.startMinutes, endMinutes: cut });
+          if (cut < b.endMinutes) lateSegments.push({ startMinutes: cut, endMinutes: b.endMinutes });
+          remaining -= cut - b.startMinutes;
+        }
+        return [earlySegments, lateSegments];
+      };
+      // No piece under 1 h, and no continuous 6–6.5 h or 8.5–9 h stint (no valid
+      // break length exists for those); nudge the cut until both hold.
+      const breakable = (segments: ShiftSegment[]) => {
+        if (segments.some((g) => g.endMinutes - g.startMinutes < 60)) return false;
+        if (segments.length !== 1) return true;
+        const presence = segments[0].endMinutes - segments[0].startMinutes;
+        return !((presence > 360 && presence <= 390) || (presence >= 510 && presence < 540));
+      };
+      const [earlySegments, lateSegments] = [0, 15, -15, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90]
+        .map((delta) => cutAt(Math.min(total, Math.max(0, target + delta))))
+        .find((parts) => parts.every(breakable)) ?? cutAt(target);
+      const before = paidOf(kitchen[0]);
+      add(early, date, earlySegments);
+      add(late, date, lateSegments);
+      need -= paidOf(kitchen[0]) - before;
+      left -= total;
     }
-    add(early, date, earlySegments);
-    add(late, date, lateSegments);
   }
   // Spend remaining kitchen hours only on the optional Friday/Saturday dinner overlap.
   if (kitchen.length === 2) for (const date of dates) {
@@ -93,7 +142,8 @@ export function applyVietphoRoster(input: GenerateInput, original: Shift[]): Shi
       const segments = (shift.segments ?? [{ startMinutes: shift.startMinutes, endMinutes: shift.endMinutes }]).map((s) => ({ ...s }));
       const last = segments[segments.length - 1];
       if (last.endMinutes >= 1200) continue;
-      last.endMinutes = 1200;
+      last.endMinutes = Math.min(1200, last.endMinutes + Math.floor((e.targetMinutes - used) / 15) * 15);
+      if (last.endMinutes <= shift.endMinutes) continue;
       const previous = result.indexOf(shift);
       add(e, date, segments);
       const candidate = result.pop()!;
