@@ -129,25 +129,95 @@ export function applyVietphoRoster(input: GenerateInput, original: Shift[]): Shi
       left -= total;
     }
   }
-  // Spend remaining kitchen hours only on the optional Friday/Saturday dinner overlap.
-  if (kitchen.length === 2) for (const date of dates) {
-    if (![5, 6].includes(parseIsoDate(date).getDay())) continue;
-    const day = resolveDay(input.workHours, date, holidays, input.overrides ?? {});
-    if (!day.blocks.some((b) => b.startMinutes <= 1080 && b.endMinutes >= 1200)) continue;
-    const shifts = result.filter((s) => s.date === date && kitchen.some((e) => e.id === s.employeeId));
-    if (shifts.length !== 2) continue;
-    for (const shift of shifts) {
-      const e = kitchen.find((e) => e.id === shift.employeeId)!;
-      const used = result.filter((s) => s.employeeId === e.id).reduce((sum, s) => sum + s.paidMinutes, 0);
-      const segments = (shift.segments ?? [{ startMinutes: shift.startMinutes, endMinutes: shift.endMinutes }]).map((s) => ({ ...s }));
-      const last = segments[segments.length - 1];
-      if (last.endMinutes >= 1200) continue;
-      last.endMinutes = Math.min(1200, last.endMinutes + Math.floor((e.targetMinutes - used) / 15) * 15);
-      if (last.endMinutes <= shift.endMinutes) continue;
-      const previous = result.indexOf(shift);
-      add(e, date, segments);
-      const candidate = result.pop()!;
-      if (used + candidate.paidMinutes - shift.paidMinutes <= e.targetMinutes && candidate.paidMinutes <= 600) result[previous] = candidate;
+  // Kitchen hours still owed become overlap with the other cook: first the
+  // Fri/Sat dinner (18–20), then any dinner, then the lunch peak (12–14), then
+  // the remaining open hours. Long days (9–10 h) are fine; never above target.
+  if (kitchen.length === 2) {
+    const used = (e: Employee) => result.filter((s) => s.employeeId === e.id).reduce((sum, s) => sum + s.paidMinutes, 0);
+    const piecesOf = (shift: Shift): ShiftSegment[] =>
+      (shift.segments ?? [{ startMinutes: shift.startMinutes, endMinutes: shift.endMinutes }]).map((g) => ({ ...g }));
+    const breakable = (segments: ShiftSegment[]) => {
+      if (segments.length !== 1) return true;
+      const presence = segments[0].endMinutes - segments[0].startMinutes;
+      return !((presence > 360 && presence <= 390) || (presence >= 510 && presence < 540));
+    };
+    /** Cook's pieces stretched over `w` inside its block (contiguous, no new gaps). */
+    const stretch = (pieces: ShiftSegment[], w: ShiftSegment, blocks: ShiftSegment[]) => {
+      const block = blocks.find((b) => b.startMinutes <= w.startMinutes && w.endMinutes <= b.endMinutes);
+      if (!block) return null;
+      const inBlock = pieces.find((g) => g.startMinutes < block.endMinutes && g.endMinutes > block.startMinutes);
+      const next = pieces.filter((g) => g !== inBlock).map((g) => ({ ...g }));
+      next.push(inBlock
+        ? { startMinutes: Math.min(inBlock.startMinutes, w.startMinutes), endMinutes: Math.max(inBlock.endMinutes, w.endMinutes) }
+        : { ...w });
+      return next.sort((a, b) => a.startMinutes - b.startMinutes);
+    };
+    const isWeekendEve = (date: string) => [5, 6].includes(parseIsoDate(date).getDay());
+    const waves: { days: (date: string) => boolean; window: ShiftSegment }[] = [
+      { days: isWeekendEve, window: { startMinutes: 1080, endMinutes: 1200 } },
+      { days: (d) => !isWeekendEve(d), window: { startMinutes: 1080, endMinutes: 1200 } },
+      { days: () => true, window: { startMinutes: 720, endMinutes: 840 } },
+      { days: () => true, window: { startMinutes: 1020, endMinutes: 1080 } },
+      { days: () => true, window: { startMinutes: 840, endMinutes: 900 } },
+      { days: () => true, window: { startMinutes: 1200, endMinutes: 1320 } },
+      { days: () => true, window: { startMinutes: 660, endMinutes: 720 } },
+    ];
+    for (const e of kitchen) {
+      for (const wave of waves) {
+        for (const date of dates) {
+          if (used(e) >= e.targetMinutes) break;
+          if (!wave.days(date)) continue;
+          const day = resolveDay(input.workHours, date, holidays, input.overrides ?? {});
+          const onDay = result.filter((s) => s.date === date && kitchen.some((k) => k.id === s.employeeId));
+          const shift = onDay.find((s) => s.employeeId === e.id);
+          if (!shift || onDay.length !== 2) continue;
+          const room = e.targetMinutes - used(e);
+          // Try the whole window, then smaller pieces of it next to the shift.
+          const tries = [];
+          for (let cut = 0; cut <= wave.window.endMinutes - wave.window.startMinutes - 15; cut += 15) {
+            tries.push({ startMinutes: wave.window.startMinutes, endMinutes: wave.window.endMinutes - cut });
+            if (cut > 0) tries.push({ startMinutes: wave.window.startMinutes + cut, endMinutes: wave.window.endMinutes });
+          }
+          for (const w of tries) {
+            const next = stretch(piecesOf(shift), w, day.blocks);
+            if (!next || !breakable(next) || next.some((g) => g.endMinutes - g.startMinutes < 60)) continue;
+            const index = result.indexOf(shift);
+            add(e, date, next);
+            const candidate = result.pop()!;
+            const gain = candidate.paidMinutes - shift.paidMinutes;
+            if (gain > 0 && gain <= room && candidate.paidMinutes <= 600) {
+              result[index] = candidate;
+              break;
+            }
+          }
+        }
+      }
+    }
+    // Rounding can leave a cook a little above target: trim 15 min off an edge
+    // the other cook also covers, so the kitchen never goes empty.
+    for (const e of kitchen) {
+      for (const date of dates) {
+        if (used(e) <= e.targetMinutes) break;
+        const shift = result.find((s) => s.date === date && s.employeeId === e.id);
+        const other = result.find((s) => s.date === date && kitchen.some((k) => k.id === s.employeeId && k.id !== e.id));
+        if (!shift || !other) continue;
+        const covered = (t: number) => piecesOf(other).some((g) => g.startMinutes <= t && g.endMinutes >= t + 15);
+        const pieces = piecesOf(shift);
+        for (const [i, side] of pieces.flatMap((_, i) => [[i, "start"], [i, "end"]] as const)) {
+          const next = pieces.map((g) => ({ ...g }));
+          const g = next[i];
+          if (side === "start" ? !covered(g.startMinutes) : !covered(g.endMinutes - 15)) continue;
+          if (side === "start") g.startMinutes += 15; else g.endMinutes -= 15;
+          if (!breakable(next) || next.some((p) => p.endMinutes - p.startMinutes < 60)) continue;
+          const index = result.indexOf(shift);
+          add(e, date, next);
+          const candidate = result.pop()!;
+          if (candidate.paidMinutes < shift.paidMinutes && used(e) - shift.paidMinutes + candidate.paidMinutes >= e.targetMinutes) {
+            result[index] = candidate;
+            break;
+          }
+        }
+      }
     }
   }
   return result.sort((a, b) => a.date.localeCompare(b.date) || a.startMinutes - b.startMinutes || a.employeeId.localeCompare(b.employeeId));

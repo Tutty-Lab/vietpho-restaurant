@@ -71,6 +71,9 @@ function weekKeyOf(isoDate: string): string {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
 }
 
+/** Viet Pho: so viel Abweichung vom Monatssoll ist ok (kein Hinweis). */
+export const VIETPHO_HOURS_TOLERANCE_MINUTES = 5 * 60;
+
 export function validateSchedule(
   employees: Employee[],
   shifts: Shift[],
@@ -227,7 +230,9 @@ export function validateSchedule(
       }
     }
 
-    if (assignedMinutes !== emp.targetMinutes) {
+    // Viet Pho: ±5 h gegenüber dem Monatssoll gilt als erreicht (Wunsch Chef, Okt 2026).
+    const tolerance = context?.storeId === "vietpho" ? VIETPHO_HOURS_TOLERANCE_MINUTES : 0;
+    if (Math.abs(assignedMinutes - emp.targetMinutes) > tolerance) {
       // Azubi: mehr Soll als die 40-h-Woche zulässt → kein Fehler, nur Hinweis.
       const breakdown =
         emp.employmentType === "AZUBI" && context

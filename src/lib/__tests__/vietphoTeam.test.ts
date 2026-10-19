@@ -31,11 +31,21 @@ describe("Viet Pho: owner works every day, preferring service", () => {
     expect(result.errors.some((e) => e.employeeId === "hen" && e.kind === "hours")).toBe(false);
   });
 
-  it("splits the kitchen by monthly target, never above it", () => {
+  it("gives both cooks exactly their monthly target", () => {
     const paid = (id: string) => shifts.filter((s) => s.employeeId === id).reduce((a, s) => a + s.paidMinutes, 0);
     expect(paid("nga")).toBe(140 * 60);
-    expect(paid("dinh")).toBeLessThanOrEqual(168 * 60);
-    expect(paid("dinh")).toBeGreaterThanOrEqual(164 * 60);
+    // Fehlende Öffnungsstunden werden als Überlappung (auch 9–10-h-Tage) nachgeholt.
+    expect(paid("dinh")).toBe(168 * 60);
+  });
+
+  it("treats up to ±5 h off the monthly target as fine", () => {
+    const ctx = { year, month, workHours, holidayState: "BW" as const, storeId: "vietpho" };
+    const hours = (list: typeof shifts) => validateSchedule(team, list, ctx).errors.filter((e) => e.kind === "hours" && e.employeeId === "nga");
+    const nga = shifts.filter((s) => s.employeeId === "nga");
+    const shrink = (minutes: number) => shifts.map((s) => (s === nga[0] ? { ...s, paidMinutes: s.paidMinutes - minutes } : s));
+    expect(hours(shrink(4 * 60))).toEqual([]);
+    expect(hours(shrink(5 * 60))).toEqual([]);
+    expect(hours(shrink(5 * 60 + 15))).toHaveLength(1);
   });
 
   it("schedules Thuy Loan only on Sundays, replacing the old Monday setting", () => {
