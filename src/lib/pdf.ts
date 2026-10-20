@@ -29,6 +29,7 @@ import { minutesToDecimalHours, minutesToTime } from "./time";
 import { MONTH_NAMES_DE } from "./dateFormat";
 import { holidayNames } from "./holidays";
 import { format } from "date-fns";
+import { hourStatsFor } from "./zuschlaege";
 
 /** Dateiname säubern: Umlaute/Akzente weg, nur unbedenkliche Zeichen behalten. */
 export function safeFileName(text: string): string {
@@ -424,7 +425,7 @@ function drawStundenzettel(
 }
 
 /**
- * Baut die Stundenzettel-PDF: eine A4-Seite je Mitarbeiter.
+ * Baut die Stundenzettel-PDF: Seite 1 Stundenübersicht, danach eine A4-Seite je Mitarbeiter.
  * `dates` fehlt => ganzer Monat; `periodLabel` fehlt => Monat/Jahr.
  *
  * async + kurzer Yield je Seite: der Fortschritt (X/N) kann gerendert werden
@@ -441,14 +442,92 @@ export async function buildStundenzettelPdf(
   const dates = opts.dates ?? datesOfMonth(schedule.year, schedule.month);
   const periodLabel = opts.periodLabel ?? monthLabelDe(schedule.year, schedule.month);
 
+  // Seite 1: Stundenübersicht aller Mitarbeiter, danach je Person ein Blatt.
+  drawUebersicht(doc, schedule, employees, dates, periodLabel);
   for (let i = 0; i < employees.length; i++) {
-    if (i > 0) doc.addPage();
+    doc.addPage();
     drawStundenzettel(doc, schedule, employees[i], dates, periodLabel);
     onProgress?.(i + 1, employees.length);
     if (employees.length > 1) await new Promise((r) => setTimeout(r, 0));
   }
 
   return doc;
+}
+
+// ── Übersicht (Seite 1) ─────────────────────────────────────────────────────
+
+const UEBERSICHT_NOTE =
+  "Nachtstunden: bezahlte Arbeitszeit ab 20:00 Uhr (ohne Pause), ohne Sonntage. " +
+  "Sonntagsstunden: gesamte bezahlte Arbeitszeit an Sonntagen (nicht doppelt als Nacht gezählt). " +
+  "Angaben in Stunden.";
+
+/**
+ * Seite 1 jeder Stundenzettel-PDF: je Mitarbeiter Gesamt-, Nacht- (ab 20 Uhr)
+ * und Sonntagsstunden – vom Programm berechnet (wie Khang Ngon).
+ */
+function drawUebersicht(
+  doc: jsPDF,
+  schedule: Schedule,
+  employees: Employee[],
+  dates: string[],
+  periodLabel: string,
+): void {
+  const pageW = doc.internal.pageSize.getWidth();
+  let y = drawHeader(doc, "Stundenübersicht", schedule, periodLabel) + 2;
+  const left = MARGIN;
+  const right = pageW - MARGIN;
+  const numW = 46;
+  const cols = [
+    { label: "Mitarbeiter", x: left, align: "left" as const },
+    { label: "Gesamtstunden", x: right - 2 * numW, align: "right" as const },
+    { label: "Nachtstunden (ab 20 Uhr)", x: right - numW, align: "right" as const },
+    { label: "Sonntagsstunden", x: right, align: "right" as const },
+  ];
+  const rowH = 6.5;
+  const line = (yy: number, color = DIVIDER, width = 0.2) => {
+    doc.setDrawColor(...color);
+    doc.setLineWidth(width);
+    doc.line(left, yy, right, yy);
+  };
+  const cell = (text: string, col: (typeof cols)[number], yy: number) =>
+    doc.text(T(text), col.align === "right" ? col.x - 1.5 : col.x + 1.5, yy, { align: col.align });
+
+  doc.setFillColor(...HEAD_FILL);
+  doc.rect(left, y, right - left, rowH, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(...INK);
+  cols.forEach((col) => cell(col.label, col, y + 4.3));
+  y += rowH;
+  line(y, LINE, 0.3);
+
+  const sum = { total: 0, night: 0, sunday: 0 };
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  for (const employee of employees) {
+    const stats = hourStatsFor(schedule.shifts, employee.id, dates);
+    sum.total += stats.total;
+    sum.night += stats.night;
+    sum.sunday += stats.sunday;
+    cell(employee.name, cols[0], y + 4.3);
+    cell(minutesToDecimalHours(stats.total), cols[1], y + 4.3);
+    cell(minutesToDecimalHours(stats.night), cols[2], y + 4.3);
+    cell(minutesToDecimalHours(stats.sunday), cols[3], y + 4.3);
+    y += rowH;
+    line(y);
+  }
+  line(y, LINE, 0.3);
+  doc.setFont("helvetica", "bold");
+  cell("Summe", cols[0], y + 4.3);
+  cell(minutesToDecimalHours(sum.total), cols[1], y + 4.3);
+  cell(minutesToDecimalHours(sum.night), cols[2], y + 4.3);
+  cell(minutesToDecimalHours(sum.sunday), cols[3], y + 4.3);
+  y += rowH + 4;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...MUTED);
+  doc.text(doc.splitTextToSize(T(UEBERSICHT_NOTE), right - left), left, y);
 }
 
 // ── Datei ausliefern ─────────────────────────────────────────────────────────
@@ -483,7 +562,7 @@ export function savePdf(doc: jsPDF, filename: string): void {
 
 // ── Schnittstelle wie bisher (die Oberfläche ruft genau diese Namen auf) ────
 
-/** PDF-Dokument bauen: eine Seite je Mitarbeiter. */
+/** PDF-Dokument bauen: Seite 1 Übersicht, dann eine Seite je Mitarbeiter. */
 export async function buildStundenzettelDoc(params: {
   schedule: Schedule;
   employees: Employee[];

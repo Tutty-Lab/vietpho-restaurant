@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { UseScheduleReturn } from "../hooks/useSchedule";
-import { StundenzettelPage } from "./StundenzettelPage";
+import { StundenUebersichtPage, StundenzettelPage } from "./StundenzettelPage";
 import { SavedSchedulesButton } from "./SavedSchedules";
 import { exportStundenzettelPdf, safeFileName } from "../lib/pdf";
 import { weeksOfMonth } from "../lib/weeks";
@@ -150,6 +150,16 @@ export function StundenzettelTab({ store }: { store: UseScheduleReturn }) {
           link).
         </p>
       </div>
+
+      {/* Wie Seite 1 der PDF: Übersicht vor dem Einzelblatt. */}
+      {chosenEmployees.length > 0 && (
+        <>
+          <div className="mb-1 text-xs text-slate-500">Trang 1 của file PDF: bảng tổng hợp giờ</div>
+          <div className="mb-4 rounded-lg border border-slate-300 shadow-sm bg-white overflow-x-auto">
+            <StundenUebersichtPage schedule={schedule} employees={chosenEmployees} />
+          </div>
+        </>
+      )}
 
       {/* Xem trước trên màn hình cho nhân viên đã chọn */}
       {previewEmployee && (

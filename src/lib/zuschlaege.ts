@@ -58,6 +58,27 @@ export function zuschlagTotals(shifts: readonly Shift[]): ZuschlagTotals {
   );
 }
 
+export type HourStats = { total: number; night: number; sunday: number };
+
+/**
+ * Stundenübersicht (Seite 1 der PDF): Summen einer Person über die Tage.
+ * Nacht = ab 20:00 (Mo–Sa); Sonntag zählt nur als Sonntag, nie zusätzlich als Nacht.
+ */
+export function hourStatsFor(
+  shifts: readonly Shift[],
+  employeeId: string,
+  dates: readonly string[],
+): HourStats {
+  const inRange = new Set(dates);
+  const mine = shifts.filter((shift) => shift.employeeId === employeeId && inRange.has(shift.date));
+  const totals = zuschlagTotals(mine);
+  return {
+    total: mine.reduce((sum, shift) => sum + shift.paidMinutes, 0),
+    night: totals.after20Minutes,
+    sunday: totals.sundayMinutes,
+  };
+}
+
 export type ZuschlagCalculation = ZuschlagTotals &
   SurchargeConfig & {
     after20BonusMinutes: number;

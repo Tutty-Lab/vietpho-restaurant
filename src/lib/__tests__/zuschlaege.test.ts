@@ -87,3 +87,23 @@ describe("Zuschlaege", () => {
     });
   });
 });
+
+describe("hourStatsFor (Stundenübersicht)", () => {
+  it("counts Nacht from 20:00 Mon–Sat and Sunday only as Sonntag", async () => {
+    const { hourStatsFor } = await import("../zuschlaege");
+    const shifts = [
+      // Mittwoch 17–22: 2 h Nacht
+      shift({ id: "a", date: "2026-08-05", startMinutes: 17 * 60, endMinutes: 22 * 60, paidMinutes: 5 * 60 }),
+      // Sonntag 16:30–22: alles Sonntag, keine Nacht
+      shift({ id: "b", date: "2026-08-02" }),
+      // anderer Mitarbeiter zählt nicht
+      shift({ id: "c", employeeId: "other", date: "2026-08-05" }),
+    ];
+    expect(hourStatsFor(shifts, "employee", ["2026-08-02", "2026-08-05"])).toEqual({
+      total: 10.5 * 60,
+      night: 2 * 60,
+      sunday: 5.5 * 60,
+    });
+    expect(hourStatsFor(shifts, "employee", ["2026-08-05"])).toEqual({ total: 5 * 60, night: 2 * 60, sunday: 0 });
+  });
+});

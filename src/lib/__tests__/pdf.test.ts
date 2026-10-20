@@ -87,3 +87,14 @@ describe("Stundenzettel: ca gãy", () => {
     expect(totalMinutes).toBe(13.5 * 60);
   });
 });
+
+describe("Stundenzettel-PDF", () => {
+  it("starts with the Stundenübersicht page, then one page per employee", async () => {
+    const { buildStundenzettelPdf } = await import("../pdf");
+    const { createSampleSchedule } = await import("../sampleData");
+    const schedule = createSampleSchedule();
+    const employees = schedule.employees.slice(0, 2);
+    const doc = await buildStundenzettelPdf(schedule, employees);
+    expect(doc.getNumberOfPages()).toBe(employees.length + 1);
+  });
+});
