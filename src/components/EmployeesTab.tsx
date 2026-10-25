@@ -29,6 +29,7 @@ import {
   azubiTermMonths,
 } from "../lib/azubi";
 import {
+  conflictingWorkDays,
   hasRequiredFixedDaysOff,
   requiredFixedDaysOff,
   WEEKDAY_ORDER,
@@ -508,6 +509,7 @@ function EmployeeSheet({
   const requiredDaysOff = requiredFixedDaysOff(d.employmentType);
   const draftEmp: Employee = { id: "draft", ...draftToEmployee(d) };
   const daysOffOk = hasRequiredFixedDaysOff(draftEmp);
+  const conflictingDays = conflictingWorkDays(draftEmp);
   const monthDays = new Date(year, month, 0).getDate();
   const activeDays = activeDaysInMonth(draftEmp, year, month);
   const periodPreview =
@@ -533,7 +535,7 @@ function EmployeeSheet({
     set("fixedDaysOff", next);
   };
 
-  const canSave = !(showWorkRole && !d.workRole) && d.name.trim().length > 0;
+  const canSave = !(showWorkRole && !d.workRole) && d.name.trim().length > 0 && conflictingDays.length === 0;
 
   return (
     <div
@@ -742,6 +744,12 @@ function EmployeeSheet({
           )}
 
           <SheetSection title="Chỉ làm các ngày (để trống = mọi ngày)">
+            {conflictingDays.length > 0 && (
+              <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+                {conflictingDays.map((day) => WEEKDAY_LABELS[day]).join(", ")}: vừa chọn nghỉ cố định, vừa chọn làm việc.
+                {" "}Bỏ ngày này khỏi một trong hai mục để lưu.
+              </p>
+            )}
             <div className="grid grid-cols-7 gap-1">
               {WEEKDAY_ORDER.map((weekday) => {
                 const selected = d.workDays.includes(weekday);
@@ -1031,7 +1039,7 @@ function EmployeeSheet({
                 Huỷ
               </button>
               <button
-                onClick={() => onSave(draftToEmployee(d))}
+                onClick={() => { if (canSave) onSave(draftToEmployee(d)); }}
                 disabled={!canSave}
                 className="rounded-lg bg-slate-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
               >

@@ -13,6 +13,12 @@ export const WEEKDAY_ORDER: readonly WeekdayName[] = [
 
 const WEEKDAYS = new Set<WeekdayName>(WEEKDAY_ORDER);
 
+/** Empty workDays means unrestricted availability, not an explicit conflict. */
+export function conflictingWorkDays(employee: Pick<Employee, "workDays" | "fixedDaysOff">): WeekdayName[] {
+  if (!employee.workDays?.length) return [];
+  return WEEKDAY_ORDER.filter((day) => employee.workDays!.includes(day) && employee.fixedDaysOff?.includes(day));
+}
+
 export function requiredFixedDaysOff(employmentType: EmploymentType): number {
   if (employmentType === "VOLLZEIT") return 1;
   if (employmentType === "AZUBI") return 2;

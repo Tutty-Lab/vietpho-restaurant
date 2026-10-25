@@ -1,5 +1,5 @@
 import type { Employee } from "../types";
-import { hasRequiredFixedDaysOff } from "./fixedDaysOff";
+import { conflictingWorkDays, hasRequiredFixedDaysOff } from "./fixedDaysOff";
 import { azubiMonthMode, azubiMonthlyHoursOverride, azubiSchoolTermRange } from "./azubi";
 
 export type ScheduleReadiness = {
@@ -19,6 +19,11 @@ export function checkScheduleReadiness(
   } = {},
 ): ScheduleReadiness {
   const issues: string[] = [];
+  for (const employee of employees) {
+    if (conflictingWorkDays(employee).length) {
+      issues.push(`${employee.name}: ngày nghỉ cố định trùng với ngày được làm. Sửa thông tin nhân viên trước khi tạo lịch.`);
+    }
+  }
 
   if (employees.length < 2) issues.push("Cần ít nhất 2 nhân viên.");
   if (employees.some((employee) => employee.name.trim().length === 0)) {
