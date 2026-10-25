@@ -161,7 +161,7 @@ function draftToEmployee(d: Draft): Omit<Employee, "id"> {
     // Gewünschte Arbeitstage/Woche: nur 1..7, sonst nicht gesetzt.
     desiredDaysPerWeek: desiredDaysFromDraft(d),
     canSwitchRole: d.canSwitchRole || undefined,
-    workDays: d.workDays.length > 0 && d.workDays.length < 7 ? WEEKDAY_ORDER.filter((x) => d.workDays.includes(x)) : undefined,
+    workDays: d.workDays.length > 0 && d.workDays.length < 7 ? WEEKDAY_ORDER.filter((x) => d.workDays.includes(x)) : [],
     // Monats-Rollen nur behalten, wenn umstellbar und abweichend von der Hauptrolle.
     roleByMonth: (() => {
       if (!d.canSwitchRole) return undefined;

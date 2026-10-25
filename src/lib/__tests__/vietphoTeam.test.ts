@@ -48,10 +48,10 @@ describe("Viet Pho: owner works every day, preferring service", () => {
     expect(hours(shrink(5 * 60 + 15))).toHaveLength(1);
   });
 
-  it("schedules Thuy Loan only on Sundays, replacing the old Monday setting", () => {
+  it("preserves Thuy Loan's explicitly selected Mondays", () => {
     const days = shifts.filter((s) => s.employeeId === "loan").map((s) => weekdayKeyOf(parseIsoDate(s.date)));
     expect(days.length).toBeGreaterThan(0);
-    expect(new Set(days)).toEqual(new Set(["sunday"]));
+    expect(new Set(days)).toEqual(new Set(["monday"]));
   });
 
   it("keeps the kitchen staffed by Dinh/Nga almost all the time", () => {

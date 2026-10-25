@@ -10,6 +10,7 @@ import { calculatePaidMinutes, calculatePause } from "./time";
 export function vietphoRosterEmployees(employees: Employee[]): Employee[] {
   return employees.map((e) => {
     if (e.workRole !== "SERVICE" || e.employmentType === "AZUBI") return e;
+    if (e.workDays !== undefined) return e;
     const hours = (e.baseTargetMinutes ?? e.targetMinutes) / 60;
     if (hours === 20) return { ...e, workDays: ["sunday"], fixedDaysOff: undefined };
     if (hours === 80) return { ...e, workDays: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"], fixedDaysOff: undefined };
@@ -17,13 +18,24 @@ export function vietphoRosterEmployees(employees: Employee[]): Employee[] {
   });
 }
 
+/** Explicit scheduling preferences use the general planner, which supports them. */
+function usesCustomPlanning(e: Employee): boolean {
+  if (e.desiredDaysPerWeek || e.spreadEvenly || e.preferredWindows?.length || e.shiftHours) return true;
+  if (e.workDays === undefined) return false;
+  const hours = (e.baseTargetMinutes ?? e.targetMinutes) / 60;
+  const defaults = e.workRole === "SERVICE" && hours === 20 ? ["sunday"]
+    : e.workRole === "SERVICE" && hours === 80 ? ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] : null;
+  return defaults === null || defaults.length !== e.workDays.length || defaults.some((d) => !e.workDays!.includes(d as typeof e.workDays[number]));
+}
+
 /** Fixed service visits and alternating kitchen coverage take priority over monthly targets. */
 export function applyVietphoRoster(input: GenerateInput, original: Shift[]): Shift[] {
   input = { ...input, employees: vietphoRosterEmployees(input.employees) };
   const dates = datesOfMonth(input.year, input.month);
   const holidays = input.holidays ?? holidaysOf(input.year, input.holidayState ?? "BW");
-  const kitchen = input.employees.filter((e) => e.workRole === "KITCHEN" && e.targetMinutes > 0);
-  const service = input.employees.filter((e) => e.workRole === "SERVICE" && e.employmentType !== "AZUBI");
+  const cooks = input.employees.filter((e) => e.workRole === "KITCHEN" && e.targetMinutes > 0);
+  const kitchen = cooks.some(usesCustomPlanning) ? [] : cooks;
+  const service = input.employees.filter((e) => e.workRole === "SERVICE" && e.employmentType !== "AZUBI" && !usesCustomPlanning(e));
   const regular = service.filter((e) => (e.baseTargetMinutes ?? e.targetMinutes) === 80 * 60);
   const relief = service.filter((e) => (e.baseTargetMinutes ?? e.targetMinutes) === 20 * 60);
   const managed = new Set([...regular, ...relief, ...(kitchen.length === 2 ? kitchen : [])].map((e) => e.id));

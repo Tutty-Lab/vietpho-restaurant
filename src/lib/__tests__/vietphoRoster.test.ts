@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyVietphoRoster } from "../vietphoRoster";
+import { applyVietphoRoster, vietphoRosterEmployees } from "../vietphoRoster";
+import { generateSchedule } from "../scheduler";
 import { defaultWorkHoursForStore, resolveDay } from "../workHours";
 import { datesOfMonth, parseIsoDate } from "../demand";
 import { validateSchedule } from "../validation";
@@ -12,6 +13,30 @@ const employees: Employee[] = [
   { id: "relief", name: "Relief", employmentType: "TEILZEIT", workRole: "SERVICE", targetMinutes: 20 * 60 },
 ];
 describe("Vietpho fixed roster", () => {
+  it("preserves saved day selections, including explicitly unrestricted days, across reload normalization", () => {
+    for (const workDays of [[], ["monday"], ["wednesday", "friday"]] as Employee["workDays"][]) {
+      const employee = { ...employees[3], workDays, desiredDaysPerWeek: 2, spreadEvenly: true };
+      const saved = JSON.parse(JSON.stringify(vietphoRosterEmployees([employee])));
+      expect(vietphoRosterEmployees(saved)).toEqual([employee]);
+    }
+  });
+  it("retains general-planner results for custom day count and even distribution", () => {
+    const custom = employees.map((e) => ({ ...e, desiredDaysPerWeek: 2, spreadEvenly: true }));
+    const original = [{ id: "custom", employeeId: "regular", date: "2026-10-01", startMinutes: 720, endMinutes: 840, paidMinutes: 120, pauseMinutes: 0, shiftType: "CUSTOM" as const, generated: true }];
+    expect(applyVietphoRoster({ year: 2026, month: 10, employees: custom, workHours: defaultWorkHoursForStore("vietpho") }, original)).toEqual(original);
+  });
+  it("generates shifts on the selected weekdays rather than the service defaults", () => {
+    const custom: Employee[] = employees.map((e) => e.id === "regular"
+      ? { ...e, workDays: ["wednesday", "friday"], desiredDaysPerWeek: 2, spreadEvenly: true }
+      : e.id === "relief" ? { ...e, workDays: ["monday"] } : e);
+    const shifts = generateSchedule({ storeId: "vietpho", year: 2026, month: 10, employees: custom, workHours: defaultWorkHoursForStore("vietpho"), seed: "custom-days" });
+    const regular = shifts.filter((s) => s.employeeId === "regular");
+    expect(regular.length).toBeGreaterThan(0);
+    expect(regular.every((s) => [3, 5].includes(parseIsoDate(s.date).getDay()))).toBe(true);
+    const relief = shifts.filter((s) => s.employeeId === "relief");
+    expect(relief.length).toBeGreaterThan(0);
+    expect(relief.every((s) => parseIsoDate(s.date).getDay() === 1)).toBe(true);
+  });
   for (const [month, sundays, daily] of [[10, 4, 300], [11, 5, 240]]) {
     it(`covers kitchen and Sunday relief in month ${month}`, () => {
       const workHours = defaultWorkHoursForStore("vietpho");
