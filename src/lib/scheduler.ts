@@ -948,6 +948,7 @@ function desiredWeeklyDayCap(state: SchedulerState, employee: Employee): number 
   const maxDay = state.isVietpho ? 8 * 60 : MAX_DAILY_MINUTES;
 
   // ±1 Tag Toleranz: N Tage, wenn das Soll passt; sonst N+1; sonst kein Limit.
+  if (state.isVietpho) return Math.min(n, 6);
   if (weeklyNeed <= n * maxDay) return n;
   if (weeklyNeed <= (n + 1) * maxDay) return n + 1;
   return Number.POSITIVE_INFINITY;
@@ -962,7 +963,7 @@ function desiredWeeklyDayCap(state: SchedulerState, employee: Employee): number 
  *  - Vollzeit/Azubi ohne Einstellung: null (Länge frei nach Nachfrage).
  */
 function plannedShiftCount(state: SchedulerState, employee: Employee): number | null {
-  if (!state.isThienlong) return null;
+  if (!state.isThienlong && !(state.isVietpho && employee.desiredDaysPerWeek)) return null;
   if (employee.targetMinutes <= 0) return null;
 
   const cap = desiredWeeklyDayCap(state, employee);
@@ -3294,6 +3295,16 @@ export function azubiMonthCapacityMinutes(
  */
 export function generateSchedule(input: GenerateInput): Shift[] {
   if (input.storeId === "vietpho") input = { ...input, employees: vietphoRosterEmployees(input.employees) };
+  if (input.storeId === "vietpho") {
+    // Seven requested days means six workdays plus an automatically chosen rest
+    // weekday. Keep that weekday stable within the month to avoid >6-day runs.
+    input = { ...input, employees: input.employees.map((employee) => {
+      if (employee.desiredDaysPerWeek !== 7 || employee.fixedDaysOff?.length) return employee;
+      const weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+      const random = seededRandom(`${input.seed ?? "auto-rest"}:${input.year}:${input.month}:${employee.id}`);
+      return { ...employee, fixedDaysOff: [weekdays[Math.floor(random() * weekdays.length)]] };
+    }) };
+  }
   shiftIdCounter = 0;
   const { year, month, workHours, employees } = input;
   const holidays = input.holidays ?? holidaysOf(year, input.holidayState ?? "BW");

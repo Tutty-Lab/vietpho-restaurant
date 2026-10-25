@@ -508,7 +508,8 @@ function EmployeeSheet({
 
   const requiredDaysOff = requiredFixedDaysOff(d.employmentType);
   const draftEmp: Employee = { id: "draft", ...draftToEmployee(d) };
-  const daysOffOk = hasRequiredFixedDaysOff(draftEmp);
+  const autoRestDay = isVietpho && d.employmentType === "VOLLZEIT" && d.daysPerWeek === "7" && d.fixedDaysOff.length === 0;
+  const daysOffOk = autoRestDay || hasRequiredFixedDaysOff(draftEmp);
   const conflictingDays = conflictingWorkDays(draftEmp);
   const monthDays = new Date(year, month, 0).getDate();
   const activeDays = activeDaysInMonth(draftEmp, year, month);
@@ -735,6 +736,9 @@ function EmployeeSheet({
                   );
                 })}
               </div>
+              {autoRestDay && (
+                <p className="text-xs text-slate-500">Chọn 7 ngày/tuần: tự chọn 1 ngày nghỉ mỗi tuần, xếp làm 6 ngày. Ngày nghỉ được giữ cùng thứ trong tháng.</p>
+              )}
               {!daysOffOk && (
                 <p className="text-xs text-amber-700">
                   Đã chọn {d.fixedDaysOff.length}/{requiredDaysOff} ngày.

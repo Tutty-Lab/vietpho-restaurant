@@ -64,6 +64,7 @@ export function checkScheduleReadiness(
     employees.some(
       (employee) =>
         employee.employmentType === "VOLLZEIT" &&
+        !(options.storeId === "vietpho" && employee.desiredDaysPerWeek === 7 && !employee.fixedDaysOff?.length) &&
         !hasRequiredFixedDaysOff(employee),
     )
   ) {
