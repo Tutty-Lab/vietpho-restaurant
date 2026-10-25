@@ -90,7 +90,7 @@ describe("fixed weekly days off", () => {
     expect(result.errors.some((error) => error.message.includes("ngày nghỉ cố định"))).toBe(true);
   });
 
-  it("migrates older employee data without changing Teilzeit rules", () => {
+  it("preserves optional Teilzeit days off when normalizing saved data", () => {
     const vollzeit = normalizedFixedDaysOff({
       id: "legacy-vollzeit",
       name: "Legacy Vollzeit",
@@ -106,7 +106,7 @@ describe("fixed weekly days off", () => {
     });
 
     expect(vollzeit.fixedDaysOff).toEqual([]);
-    expect(teilzeit.fixedDaysOff).toBeUndefined();
+    expect(teilzeit.fixedDaysOff).toEqual(["monday"]);
   });
 
   it("never schedules a Vietpho employee on the configured fixed weekday", () => {

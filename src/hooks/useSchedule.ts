@@ -346,7 +346,7 @@ export function useSchedule() {
             azubi,
             // Vollzeit/Azubi brauchen feste Ruhetage; Teilzeit nicht.
             fixedDaysOff:
-              data.employmentType === "TEILZEIT" ? undefined : data.fixedDaysOff ?? [],
+              data.fixedDaysOff ?? [],
           },
           s.year,
           s.month,

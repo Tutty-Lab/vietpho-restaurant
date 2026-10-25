@@ -90,7 +90,7 @@ type Draft = {
   windows: { days: WeekdayName[]; start: string; end: string }[];
 };
 
-function draftFrom(emp?: Employee): Draft {
+export function draftFrom(emp?: Employee): Draft {
   return {
     name: emp?.name ?? "",
     employmentType: emp?.employmentType ?? "VOLLZEIT",
@@ -140,7 +140,7 @@ function windowsFromDraft(d: Draft): Employee["preferredWindows"] {
   return out.length > 0 ? out : undefined;
 }
 
-function draftToEmployee(d: Draft): Omit<Employee, "id"> {
+export function draftToEmployee(d: Draft): Omit<Employee, "id"> {
   const isAzubi = d.employmentType === "AZUBI";
   const stunden = Math.max(0, Math.round(Number(d.hours) || 0));
   return {
@@ -156,8 +156,8 @@ function draftToEmployee(d: Draft): Omit<Employee, "id"> {
     azubi: isAzubi ? d.azubi : undefined,
     workRole: d.workRole || undefined,
     saved: d.saved || undefined,
-    // Teilzeit hat keine festen Ruhetage; Vollzeit/Azubi schon.
-    fixedDaysOff: d.employmentType === "TEILZEIT" ? undefined : d.fixedDaysOff,
+    // Preserve explicitly selected rest days for every employment type.
+    fixedDaysOff: d.fixedDaysOff,
     // Gewünschte Arbeitstage/Woche: nur 1..7, sonst nicht gesetzt.
     desiredDaysPerWeek: desiredDaysFromDraft(d),
     canSwitchRole: d.canSwitchRole || undefined,
@@ -190,6 +190,7 @@ function EmployeesList({ store }: { store: UseScheduleReturn }) {
   const { schedule, addEmployee, updateEmployee, removeEmployee } = store;
 
   const [offen, setOffen] = useState<null | "new" | string>(null);
+  const [savedNotice, setSavedNotice] = useState(false);
   const bearbeitet = useMemo(
     () =>
       typeof offen === "string" && offen !== "new"
@@ -219,6 +220,11 @@ function EmployeesList({ store }: { store: UseScheduleReturn }) {
       <p className="mb-4 text-xs text-slate-500">
         Bấm vào một người để sửa. Azubi: kỳ học và giờ từng tháng cài ngay trong đó.
       </p>
+      {savedNotice && (
+        <p role="status" className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">
+          Đã lưu thông tin nhân viên. Bấm Tạo lịch để áp dụng cài đặt mới; lịch hiện tại chưa thay đổi.
+        </p>
+      )}
 
       {schedule.employees.length === 0 ? (
         <div className="py-8 text-center text-slate-400">
@@ -263,6 +269,7 @@ function EmployeesList({ store }: { store: UseScheduleReturn }) {
           onSave={(felder) => {
             if (bearbeitet) updateEmployee(bearbeitet.id, felder);
             else addEmployee(felder);
+            setSavedNotice(true);
             setOffen(null);
           }}
           onDelete={
@@ -701,8 +708,8 @@ function EmployeeSheet({
             </div>
           </SheetSection>
 
-          {requiredDaysOff > 0 && (
-            <SheetSection title={`Ngày nghỉ cố định · chọn ${requiredDaysOff}`}>
+          {(
+            <SheetSection title={requiredDaysOff > 0 ? `Ngày nghỉ cố định · chọn ${requiredDaysOff}` : "Ngày nghỉ cố định (tuỳ chọn)"}>
               <div className="grid grid-cols-7 gap-1">
                 {WEEKDAY_ORDER.map((weekday) => {
                   const selected = d.fixedDaysOff.includes(weekday);

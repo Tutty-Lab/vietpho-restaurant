@@ -33,7 +33,7 @@ export function normalizedFixedDaysOff(employee: Employee): Employee {
   if (limit === 0) {
     return employee.fixedDaysOff === undefined
       ? employee
-      : { ...employee, fixedDaysOff: undefined };
+      : { ...employee, fixedDaysOff: fixedDaysOf(employee) };
   }
 
   const normalized = fixedDaysOf(employee).slice(0, limit);

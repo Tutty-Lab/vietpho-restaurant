@@ -10,7 +10,7 @@ import { calculatePaidMinutes, calculatePause } from "./time";
 export function vietphoRosterEmployees(employees: Employee[]): Employee[] {
   return employees.map((e) => {
     if (e.workRole !== "SERVICE" || e.employmentType === "AZUBI") return e;
-    if (e.workDays !== undefined) return e;
+    if (e.workDays !== undefined || e.fixedDaysOff !== undefined) return e;
     const hours = (e.baseTargetMinutes ?? e.targetMinutes) / 60;
     if (hours === 20) return { ...e, workDays: ["sunday"], fixedDaysOff: undefined };
     if (hours === 80) return { ...e, workDays: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"], fixedDaysOff: undefined };
@@ -20,6 +20,7 @@ export function vietphoRosterEmployees(employees: Employee[]): Employee[] {
 
 /** Explicit scheduling preferences use the general planner, which supports them. */
 function usesCustomPlanning(e: Employee): boolean {
+  if (e.workRole === "SERVICE" && e.fixedDaysOff?.length) return true;
   if (e.desiredDaysPerWeek || e.spreadEvenly || e.preferredWindows?.length || e.shiftHours) return true;
   if (e.workDays === undefined) return false;
   const hours = (e.baseTargetMinutes ?? e.targetMinutes) / 60;
@@ -92,9 +93,8 @@ export function applyVietphoRoster(input: GenerateInput, original: Shift[]): Shi
       }
     }
     if (kitchen.length !== 2) continue;
-    // Preserve configured rest days; otherwise stagger one weekly rest day per cook.
-    const active = kitchen.filter((e, i) => available(e, date) &&
-      (e.fixedDaysOff?.length || parseIsoDate(date).getDay() !== i + 1));
+    // Only the configured availability determines a cook's rest days.
+    const active = kitchen.filter((e) => available(e, date));
     if (!active.length) continue;
     if (active.length === 1) { add(active[0], date, day.blocks.map((b) => ({ ...b }))); continue; }
     paired.push({ date, blocks: day.blocks });
